@@ -25,8 +25,10 @@ Primary entrypoints:
 
 Current demo entry scripts in the repo:
 
-- `scripts/test_strategus_incidence_plus_keeper.R`
-- `scripts/demo_strategus_cohort_method.R`
+- `extras/test_strategus_incidence_plus_keeper_no_ai.R`
+- `extras/demo_strategus_cohort_method_no_ai.R`
+- `extras/test_strategus_incidence_plus_keeper.R`
+- `extras/demo_strategus_cohort_method.R`
 
 Current shell details:
 

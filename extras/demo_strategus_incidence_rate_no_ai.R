@@ -5,10 +5,7 @@
 ## Run it from the repo root or use the same parent-renv `.Rprofile` setup as the
 ## other R demos.
 
-script_dir <- "OHDSI-Study-Agent/scripts"
-source(file.path(script_dir, "demo_setup.R"))
-repo_root <- set_study_agent_repo_root(start = dirname(script_dir))
-load_study_agent_r_packages(include_strategus = TRUE)
+library(slashOhdsiStrategusAssistant)
 
 ## Next line commented out, see https://github.com/OHDSI/StudyAgent/issues/78
 ### Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))

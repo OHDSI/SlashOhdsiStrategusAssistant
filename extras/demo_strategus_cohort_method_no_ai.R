@@ -3,13 +3,10 @@
 ## This example deliberately runs without ACP/AI support. It uses direct cohort
 ## import and the step-by-step analytic-settings wizard.
 
-script_dir <- "OHDSI-Study-Agent/scripts"
-source(file.path(script_dir, "demo_setup.R"))
-repo_root <- set_study_agent_repo_root(start = dirname(script_dir))
-load_study_agent_r_packages(include_strategus = TRUE)
+library(slashOhdsiStrategusAssistant)
 
-  ## Next line commented out, see https://github.com/OHDSI/StudyAgent/issues/78
-  ### Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))
+## Next line commented out, see https://github.com/OHDSI/StudyAgent/issues/78
+### Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))
 
 ### Optional reset from a prior run.
 # reset_demo_output_dir(repo_file("demo-strategus-cohort-method"), prompt = TRUE)

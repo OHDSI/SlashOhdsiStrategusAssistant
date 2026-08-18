@@ -10,15 +10,14 @@
 ##   /ohdsi what happens if I accept the phenotype improvement recommendations?
 ##   /ohdsi how should I specify TAR so that denominators are coherent across strata?
 
-acp_url = "http://127.0.0.1:8765"
-script_dir = "OHDSI-Study-Agent/scripts"
+library(slashOhdsiStrategusAssistant)
+library(slashOhdsiAcpClient)
 
-source(file.path(script_dir, "demo_setup.R"))
-repo_root <- set_study_agent_repo_root(start = dirname(script_dir))
-load_study_agent_r_packages(include_strategus = TRUE)
+acp_url = "http://127.0.0.1:8765"
 
 Sys.setenv(ACP_TIMEOUT = "1800")
 Sys.setenv(ACP_URL = acp_url)
+
 Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))
 invisible(connect_study_agent_acp())
 
@@ -40,17 +39,17 @@ slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
 
 ############
 ## Use this to resume from cached artifacts and regenerate output scripts.
-slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-  outputDir = "demo-strategus-cohort-incidence",
-  acpUrl = acp_url,
-  studyAgentBaseDir = repo_root,
-  resume = TRUE,
-  allowCache = TRUE,
-  promptOnCache = TRUE,
-  showBanner = FALSE,
-  interactive = TRUE,
-  indexDir = "data/phenotype_index_cipher_omop"
-)
+## slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
+##   outputDir = "demo-strategus-cohort-incidence",
+##   acpUrl = acp_url,
+##   studyAgentBaseDir = repo_root,
+##   resume = TRUE,
+##   allowCache = TRUE,
+##   promptOnCache = TRUE,
+##   showBanner = FALSE,
+##   interactive = TRUE,
+##   indexDir = "data/phenotype_index_cipher_omop"
+## )
 
 ## Use this to resume from cached artifacts and regenerate output scripts without prompts.
 ## slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
