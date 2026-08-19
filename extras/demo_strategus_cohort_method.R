@@ -1,70 +1,47 @@
-### Demo: `slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell()`
-
-## Run this from the repo root with ACP listening on `http://127.0.0.1:8765`.
-## If you launch from a parent `renv` project, use the same `.Rprofile` pattern that
-## already worked for `scripts/demo_ohdsi_dialogue.R`.
-##
-## Useful `/ohdsi` prompts to try during analytic-settings and phenotype review steps:
-##   /ohdsi why is washout important here?
-##   /ohdsi what is weak about this comparator cohort?
-##   /ohdsi what should I double-check before accepting these analytic settings?
+# Demo: ACP-assisted Strategus CohortMethod workflow
+#
+# Run this script from any writable directory after installing
+# slashOhdsiStrategusAssistant and slashOhdsiAcpClient. ACP must be available at
+# ACP_URL (or http://127.0.0.1:8765 by default).
 
 library(slashOhdsiStrategusAssistant)
+
+# outputDir controls the workflow artifacts and the default Strategus work/results roots.
+demo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+banner_path <- system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant")
+if (!nzchar(banner_path)) stop("Installed package banner asset was not found.")
 library(slashOhdsiAcpClient)
 
-acp_url = "http://127.0.0.1:8765"
-
-Sys.setenv(ACP_TIMEOUT = "1800") # set high because of detailed keeper concept set extraction
-Sys.setenv(ACP_URL = acp_url)
-
-Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))
+acp_url <- Sys.getenv("ACP_URL", "http://127.0.0.1:8765")
+Sys.setenv(ACP_TIMEOUT = "1800", ACP_URL = acp_url)
 invisible(connect_study_agent_acp())
 
-### Optional reset from a prior run.
-#reset_demo_output_dir(repo_file("demo-strategus-cohort-method"), prompt = TRUE)
-#
-# Note: this clears only `demo-strategus-cohort-method`. If `incidenceOutputDir` points
-# at `demo-strategus-cohort-incidence`, you may still see cache prompts for artifacts in
-# that separate directory unless you reset it too.
-# If you already ran `scripts/test_strategus_incidence_plus_keeper.R`, this shell can
-# reuse cached target and outcome artifacts from `demo-strategus-cohort-incidence`.
+output_dir <- file.path(demo_root, "demo-strategus-cohort-method")
+incidence_output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")
+
+# To start from scratch, uncomment the next line. It removes only this demo output.
+# unlink(output_dir, recursive = TRUE, force = TRUE)
+
 slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
-  outputDir = "demo-strategus-cohort-method",
-  acpUrl = acp_url, 
-  studyAgentBaseDir = repo_root,
-  indexDir = "data/phenotype_index_cipher_omop",
-  executionTableDisplay = "viewer",
-  showBanner = FALSE
+  outputDir = output_dir,
+  incidenceOutputDir = incidence_output_dir,
+  acpUrl = acp_url,
+  aiSupport = "enabled",
+  bannerPath = banner_path,
+  showBanner = TRUE,
+  executionTableDisplay = "console"
 )
-## possible study intent:
-##    Compare new users of GLP-1RA medications vs new users of DPP4-i medications for chronic lower respiratory disease outcomes.
-## possible methods statement:
-##    Use data from 2010 to 2025. A 180-day washout, intent-to-treat with 180 days follow-up, sIPTW confounder balancing and a Cox model to estimate time-to-event for the primary outcome.
 
-## Use this to resume from cached artifacts and regenerate output scripts.
-## slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
-##   outputDir = "demo-strategus-cohort-method",
-##   acpUrl = acp_url,
-##   studyAgentBaseDir = repo_root,
-##   indexDir = "data/phenotype_index_cipher_omop",
-##   incidenceOutputDir = "demo-strategus-cohort-incidence",
-##   resume = TRUE,
-##   allowCache = TRUE,
-##   promptOnCache = TRUE,
-##   interactive = TRUE,
-##   showBanner = FALSE
-## )
-
-
-## Use this to resume from cached artifacts and regenerate output scripts without prompts.
-## slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
-##   outputDir = "demo-strategus-cohort-method",
-##   acpUrl = "http://127.0.0.1:8765",
-##   studyAgentBaseDir = repo_root,
-##    indexDir = "data/phenotype_index_cipher_omop",
-##   incidenceOutputDir = "demo-strategus-cohort-incidence",
-##   resume = TRUE,
-##   allowCache = TRUE,
-##   promptOnCache = FALSE,
-##   interactive = FALSE
-## )
+# Resume a prior run:
+# slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
+#   outputDir = output_dir,
+#   incidenceOutputDir = incidence_output_dir,
+#   acpUrl = acp_url,
+#   aiSupport = "enabled",
+#   resume = TRUE,
+#   allowCache = TRUE,
+#   promptOnCache = TRUE,
+#   bannerPath = banner_path,
+#   showBanner = TRUE,
+#   executionTableDisplay = "console"
+# )

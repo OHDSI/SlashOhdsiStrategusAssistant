@@ -1,36 +1,34 @@
-#' Interactive shell to generate Strategus CohortMethod scripts
-#' @param outputDir directory where scripts and artifacts will be written
-#' @param acpUrl ACP base URL for cohort-method recommendation calls
-#' @param studyIntent study intent text
-#' @param targetStatement optional explicit target cohort statement used for phenotype recommendation
-#' @param comparatorStatement optional explicit comparator cohort statement used for phenotype recommendation
-#' @param outcomeStatement optional explicit outcome cohort statement used for phenotype recommendation
-#' @param targetCohortId target cohort definition ID
-#' @param comparatorCohortId comparator cohort definition ID
-#' @param outcomeCohortIds outcome cohort definition IDs
-#' @param comparisonLabel optional label for the target-comparator comparison
-#' @param topK number of candidates retrieved from MCP search
-#' @param maxResults max phenotypes to show
-#' @param candidateLimit max candidates to pass to LLM
-#' @param indexDir phenotype index directory (contains definitions/ and catalog.jsonl)
-#' @param negativeControlConceptSetId optional negative control concept set ID
-#' @param includeCovariateConceptSetId optional covariate include concept set ID
-#' @param excludeCovariateConceptSetId optional covariate exclude concept set ID
-#' @param analyticSettingsDescription optional free-text analytic settings description
-#' @param analyticSettingsDescriptionPath optional path to a text file containing the free-text analytic settings description
-#' @param incidenceOutputDir optional Strategus CohortIncidence output directory used for cached target/outcome cohort reuse
-#' @param interactive whether to prompt for missing inputs
-#' @param bannerPath optional path to ASCII banner
-#' @param studyAgentBaseDir base directory to resolve relative paths
-#' @param reset when TRUE, delete outputDir before running
-#' @param allowCache reuse cached flow artifacts when present
-#' @param promptOnCache prompt before using cached flow artifacts
-#' @param autoApplyImprovements when TRUE, apply improvements without prompting (defaults to TRUE for non-interactive)
-#' @param resume when TRUE, prefer cached manual inputs when present
-#' @param remapCohortIds when TRUE, assign new local cohort IDs
-#' @param cohortIdBase optional starting cohort ID when remapping
-#' @return invisible list with output paths
-#' @export
+# Interactive shell to generate Strategus CohortMethod scripts
+# @param outputDir directory where scripts and artifacts will be written
+# @param acpUrl ACP base URL for cohort-method recommendation calls
+# @param studyIntent study intent text
+# @param targetStatement optional explicit target cohort statement used for phenotype recommendation
+# @param comparatorStatement optional explicit comparator cohort statement used for phenotype recommendation
+# @param outcomeStatement optional explicit outcome cohort statement used for phenotype recommendation
+# @param targetCohortId target cohort definition ID
+# @param comparatorCohortId comparator cohort definition ID
+# @param outcomeCohortIds outcome cohort definition IDs
+# @param comparisonLabel optional label for the target-comparator comparison
+# @param topK number of candidates retrieved from MCP search
+# @param maxResults max phenotypes to show
+# @param candidateLimit max candidates to pass to LLM
+# @param negativeControlConceptSetId optional negative control concept set ID
+# @param includeCovariateConceptSetId optional covariate include concept set ID
+# @param excludeCovariateConceptSetId optional covariate exclude concept set ID
+# @param analyticSettingsDescription optional free-text analytic settings description
+# @param analyticSettingsDescriptionPath optional path to a text file containing the free-text analytic settings description
+# @param incidenceOutputDir optional Strategus CohortIncidence output directory used for cached target/outcome cohort reuse
+# @param interactive whether to prompt for missing inputs
+# @param bannerPath optional path to ASCII banner
+# @param reset when TRUE, delete outputDir before running
+# @param allowCache reuse cached flow artifacts when present
+# @param promptOnCache prompt before using cached flow artifacts
+# @param autoApplyImprovements when TRUE, apply improvements without prompting (defaults to TRUE for non-interactive)
+# @param resume when TRUE, prefer cached manual inputs when present
+# @param remapCohortIds when TRUE, assign new local cohort IDs
+# @param cohortIdBase optional starting cohort ID when remapping
+# @return invisible list with output paths
+# @export
 .studyAgentAnalyticSettingsSectionPaths <- function() {
   list(
     study_population = c(
@@ -1578,7 +1576,7 @@
 }
 
 #' Interactive shell to generate Strategus CohortMethod scripts
-#' @param outputDir directory where scripts and artifacts will be written
+#' @param outputDir absolute workflow directory where scripts, artifacts, and the default Strategus `work/` and `results/` directories will be written
 #' @param acpUrl ACP base URL
 #' @param studyIntent study intent text
 #' @param targetStatement optional target statement override
@@ -1591,7 +1589,6 @@
 #' @param topK number of candidates retrieved from MCP search
 #' @param maxResults max phenotypes to show per role
 #' @param candidateLimit max candidates to pass to LLM
-#' @param indexDir phenotype index directory (contains definitions/)
 #' @param negativeControlConceptSetId optional negative control concept set id placeholder
 #' @param includeCovariateConceptSetId optional include covariate concept set id placeholder
 #' @param excludeCovariateConceptSetId optional exclude covariate concept set id placeholder
@@ -1599,9 +1596,8 @@
 #' @param analyticSettingsDescriptionPath optional path to a saved analytic settings description
 #' @param incidenceOutputDir optional incidence workflow directory for artifact reuse
 #' @param interactive whether to prompt for inputs
-#' @param bannerPath optional path to ASCII banner
+#' @param bannerPath path to an ASCII banner; defaults to the installed package banner
 #' @param showBanner when FALSE, suppress the startup ASCII banner
-#' @param studyAgentBaseDir base directory to resolve relative paths
 #' @param reset when TRUE, delete outputDir before running
 #' @param allowCache reuse cached artifacts when present
 #' @param promptOnCache prompt before using cached artifacts
@@ -1612,6 +1608,14 @@
 #' @param executionTableDisplay execution-menu table display preference: `console`, `viewer`, or `auto`
 #' @param aiSupport ACP/AI mode: `disabled` (default), `enabled`, or `auto`
 #' @param checkRuntime when TRUE (default), require the release-tested HADES runtime before starting
+#' @details
+#' Cohort definitions are acquired into workflow-local artifacts. With AI disabled,
+#' choose a Phenotype Library cohort, a local Circe JSON file, a directory of such
+#' files, or an existing database cohort definition. ACP recommendations must provide
+#' computable Circe JSON, which is saved locally before Strategus scripts are generated.
+#' See `system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")`
+#' for the installed acquisition guide.
+#' @seealso [system.file()] to locate the installed `phenotype-acquisition.md` guide.
 #' @return invisible list with output paths
 #' @export
 runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-methods",
@@ -1627,7 +1631,6 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
                                            topK = 20,
                                            maxResults = 3,
                                            candidateLimit = 5,
-                                           indexDir = Sys.getenv("PHENOTYPE_INDEX_DIR", "data/phenotype_index"),
                                            negativeControlConceptSetId = NULL,
                                            includeCovariateConceptSetId = NULL,
                                            excludeCovariateConceptSetId = NULL,
@@ -1635,10 +1638,9 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
                                            analyticSettingsDescriptionPath = NULL,
                                            incidenceOutputDir = "demo-strategus-cohort-incidence",
                                            interactive = TRUE,
-                                           bannerPath = "ohdsi-logo-ascii.txt",
+                                           bannerPath = system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant"),
                                            showBanner = TRUE,
-                                           studyAgentBaseDir = Sys.getenv("STUDY_AGENT_BASE_DIR", ""),
-                                           reset = FALSE,
+                                                reset = FALSE,
                                            allowCache = TRUE,
                                            promptOnCache = TRUE,
                                            autoApplyImprovements = NA,
@@ -2223,40 +2225,17 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     as.integer(collected)
   }
 
-  load_catalog <- function(index_dir) {
-    catalog_path <- file.path(index_dir, "catalog.jsonl")
-    if (!file.exists(catalog_path)) {
-      return(data.frame(
-        cohortId = integer(0),
-        name = character(0),
-        short_description = character(0),
-        stringsAsFactors = FALSE
-      ))
-    }
-    lines <- readLines(catalog_path, warn = FALSE)
-    lines <- lines[nzchar(trimws(lines))]
-    if (length(lines) == 0) {
-      return(data.frame(
-        cohortId = integer(0),
-        name = character(0),
-        short_description = character(0),
-        stringsAsFactors = FALSE
-      ))
-    }
-    parsed <- lapply(lines, function(line) jsonlite::fromJSON(line, simplifyVector = TRUE))
-    parse_catalog_cohort_id <- function(x) {
-      direct <- suppressWarnings(as.integer(x$cohortId %||% NA_integer_))
-      if (!is.na(direct)) return(direct)
-      phenotype_id <- as.character(x$phenotype_id %||% "")
-      if (grepl("^ohdsi:[0-9]+$", phenotype_id)) {
-        return(suppressWarnings(as.integer(sub("^ohdsi:", "", phenotype_id))))
-      }
-      suppressWarnings(as.integer(phenotype_id))
-    }
+  load_catalog <- function() {
+    empty <- data.frame(cohortId = integer(0), name = character(0), short_description = character(0), stringsAsFactors = FALSE)
+    if (!requireNamespace("PhenotypeLibrary", quietly = TRUE)) return(empty)
+    log <- tryCatch(PhenotypeLibrary::getPhenotypeLog(), error = function(e) NULL)
+    if (is.null(log) || nrow(log) == 0L) return(empty)
+    ids <- suppressWarnings(as.integer(log$cohortId))
+    keep <- !is.na(ids)
     data.frame(
-      cohortId = vapply(parsed, parse_catalog_cohort_id, integer(1)),
-      name = vapply(parsed, function(x) x$cohortName %||% x$phenotype_name %||% x$name %||% "", character(1)),
-      short_description = vapply(parsed, function(x) x$short_description %||% "", character(1)),
+      cohortId = ids[keep],
+      name = as.character(log$cohortName[keep] %||% ""),
+      short_description = as.character(log$logicDescription[keep] %||% ""),
       stringsAsFactors = FALSE
     )
   }
@@ -2267,7 +2246,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
 
   get_catalog_df <- function() {
     if (!isTRUE(catalog_state$loaded)) {
-      catalog_state$data <- load_catalog(index_dir)
+      catalog_state$data <- load_catalog()
       catalog_state$loaded <- TRUE
     }
     catalog_state$data
@@ -2279,6 +2258,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
 
   recommendation_identifier <- function(rec) {
     first_nonempty(
+      as.character(rec$cohort_id %||% ""),
       as.character(rec$cohortId %||% ""),
       as.character(rec$phenotype_id %||% ""),
       as.character(rec$id %||% ""),
@@ -2287,20 +2267,13 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
   }
 
   recommendation_cohort_id <- function(rec) {
-    direct <- suppressWarnings(as.integer(rec$cohortId %||% NA_integer_))
-    if (!is.na(direct)) return(direct)
-    phenotype_id <- as.character(rec$phenotype_id %||% "")
-    if (grepl("^ohdsi:[0-9]+$", phenotype_id)) {
-      return(suppressWarnings(as.integer(sub("^ohdsi:", "", phenotype_id))))
-    }
-    suppressWarnings(as.integer(phenotype_id))
+    cohort_json <- .studyAgentSlashAcpRecommendationJson(rec)
+    if (is.null(cohort_json)) return(NA_integer_)
+    .studyAgentSlashAcpRecommendationCohortId(rec, cohort_json = cohort_json)
   }
 
-  recommendation_is_ohdsi_computable <- function(rec) {
-    identifier <- recommendation_identifier(rec)
-    if (!nzchar(identifier)) return(FALSE)
-    if (grepl("^[0-9]+$", identifier)) return(TRUE)
-    grepl("^ohdsi:[0-9]+$", identifier)
+  recommendation_is_circe_computable <- function(rec) {
+    !is.null(.studyAgentSlashAcpRecommendationJson(rec))
   }
 
   recommendation_id_label <- function(rec) {
@@ -2564,7 +2537,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
   collect_recommendation_selection <- function(recommendations, role_label, allow_multiple = FALSE) {
     if (length(recommendations) == 0) return(integer(0))
     if (!isTRUE(interactive)) {
-      unsupported <- vapply(recommendations, function(rec) !isTRUE(recommendation_is_ohdsi_computable(rec)), logical(1))
+      unsupported <- vapply(recommendations, function(rec) !isTRUE(recommendation_is_circe_computable(rec)), logical(1))
       if (any(unsupported)) {
         stop(unsupported_recommendation_message(recommendations[[which(unsupported)[1]]], role_label))
       }
@@ -2588,7 +2561,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       idx <- which(labels == label)[1]
       recommendations[[idx]]
     })
-    unsupported <- vapply(selected_recs, function(rec) !isTRUE(recommendation_is_ohdsi_computable(rec)), logical(1))
+    unsupported <- vapply(selected_recs, function(rec) !isTRUE(recommendation_is_circe_computable(rec)), logical(1))
     if (any(unsupported)) {
       stop(unsupported_recommendation_message(selected_recs[[which(unsupported)[1]]], role_label))
     }
@@ -2763,7 +2736,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         rec <- recommendations[[i]]
         cat(sprintf("%d. %s (ID %s)\n", i, recommendation_name(rec), recommendation_id_label(rec)))
         if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
-        if (!isTRUE(recommendation_is_ohdsi_computable(rec))) {
+        if (!isTRUE(recommendation_is_circe_computable(rec))) {
           cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
         }
       }
@@ -2798,7 +2771,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
             rec <- recommendations[[i]]
             cat(sprintf("%d. %s (ID %s)\n", i, recommendation_name(rec), recommendation_id_label(rec)))
             if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
-            if (!isTRUE(recommendation_is_ohdsi_computable(rec))) {
+            if (!isTRUE(recommendation_is_circe_computable(rec))) {
               cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
             }
           }
@@ -2842,9 +2815,20 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
 
     selected_ids <- collect_recommendation_selection(recommendations, role_label, allow_multiple = allow_multiple)
     selected_ids <- as.integer(unique(selected_ids[!is.na(selected_ids)]))
+    selected_recommendations <- lapply(selected_ids, function(selected_id) {
+      matches <- Filter(function(rec) identical(recommendation_cohort_id(rec), selected_id), recommendations)
+      if (length(matches) != 1L) {
+        stop(sprintf("Selected %s cohort ID %s matched %s ACP recommendations; selection is ambiguous.", role_label, selected_id, length(matches)))
+      }
+      matches[[1]]
+    })
+    imported_recommendations <- lapply(selected_recommendations, function(rec) .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir))
+    selected_source_ids <- vapply(imported_recommendations, function(item) as.character(item$source_id), character(1))
 
     list(
       selected_ids = selected_ids,
+      selected_source_id = if (length(selected_source_ids) > 0) selected_source_ids[[1]] else NULL,
+      selected_source_ids = selected_source_ids,
       selection_source = if (length(selected_ids) > 0) "recommendation" else "none",
       recommendation_path = json_string_or_null(if (file.exists(recommendation_path)) recommendation_path else NULL),
       recommendation_source = if (used_cached_recommendation) "cached_recommendation" else if (!is.null(recommendation_response)) "acp_flow" else "not_run",
@@ -2926,6 +2910,24 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     )
   }
 
+
+  prompt_phenotype_library_imports <- function(role_label, allow_multiple = FALSE) {
+    if (!requireNamespace("PhenotypeLibrary", quietly = TRUE)) {
+      stop("PhenotypeLibrary must be installed to select a Phenotype Library cohort.")
+    }
+    log <- PhenotypeLibrary::getPhenotypeLog()
+    if (is.null(log) || nrow(log) == 0L) stop("PhenotypeLibrary did not return any cohort definitions.")
+    ids <- suppressWarnings(as.integer(log$cohortId))
+    labels <- sprintf("%s (ID %s)", as.character(log$cohortName), ids)
+    if (isTRUE(interactive)) {
+      picks <- utils::select.list(labels, multiple = isTRUE(allow_multiple), title = sprintf("Select %s Phenotype Library cohort%s", role_label, if (isTRUE(allow_multiple)) "s" else ""))
+      if (!length(picks) || !any(nzchar(picks))) return(NULL)
+      ids <- ids[match(picks, labels)]
+    } else {
+      ids <- ids[[1]]
+    }
+    .studyAgentSlashImportPhenotypeLibraryCohortDefinitions(ids, imported_definition_dir)
+  }
   default_cohort_id_from_source <- function(source_id) {
     source_id <- trimws(as.character(source_id %||% ""))
     if (!nzchar(source_id)) return(NA_integer_)
@@ -2941,39 +2943,15 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     suppressWarnings(as.integer(source_id))
   }
 
-  resolve_index_definition_path <- function(source_id, index_def_dir, imported_def_dir = NULL) {
-    source_text <- trimws(as.character(source_id %||% ""))
-    if (grepl("^(db:[A-Za-z][A-Za-z0-9_]*:[0-9]+|file:[0-9]+:[A-Za-z0-9_.-]+|dir:[0-9]+:[A-Za-z0-9_.-]+)$", source_text)) {
-      candidate <- .studyAgentSlashImportedCohortDefinitionPath(source_text, imported_def_dir)
-      if (file.exists(candidate)) return(candidate)
-    }
-    candidates <- character(0)
-    if (nzchar(source_text)) {
-      candidates <- c(candidates, file.path(index_def_dir, sprintf("%s.json", source_text)))
-      if (grepl("^[0-9]+$", source_text)) {
-        if (!is.null(imported_def_dir) && nzchar(as.character(imported_def_dir))) {
-          candidates <- c(candidates, .studyAgentSlashImportedCohortAliasPath(source_text, imported_def_dir))
-        }
-        candidates <- c(candidates, file.path(index_def_dir, sprintf("ohdsi__%s.json", source_text)))
-      }
-      if (grepl("^[A-Za-z0-9_]+:[A-Za-z0-9_.-]+$", source_text)) {
-        candidates <- c(
-          candidates,
-          file.path(index_def_dir, sprintf("%s.json", gsub(":", "__", source_text, fixed = TRUE)))
-        )
-      }
-    }
-    candidates <- unique(candidates[nzchar(candidates)])
-    hit <- candidates[file.exists(candidates)][1]
-    if (length(hit) == 0 || is.na(hit) || !nzchar(hit)) return(NA_character_)
-    hit
+  resolve_acquired_definition_path <- function(source_id, imported_def_dir = NULL) {
+    candidate <- .studyAgentSlashPhenotypeDefinitionPath(source_id, imported_def_dir = imported_def_dir)
+    if (!file.exists(candidate)) return(NA_character_)
+    candidate
   }
 
-  copy_cohort_json_multi <- function(source_id, dest_id, dest_dirs, index_def_dir, imported_def_dir = NULL) {
-    src <- resolve_index_definition_path(source_id, index_def_dir, imported_def_dir = imported_def_dir)
-    if (is.na(src) || !file.exists(src)) {
-      stop(sprintf("Cohort JSON not found for source %s in %s", source_id, index_def_dir))
-    }
+  copy_cohort_json_multi <- function(source_id, dest_id, dest_dirs, imported_def_dir = NULL) {
+    src <- resolve_acquired_definition_path(source_id, imported_def_dir = imported_def_dir)
+    if (is.na(src)) stop(sprintf("Cohort JSON not found for acquired source %s", source_id))
     dests <- character(0)
     for (dest_dir in dest_dirs) {
       ensure_dir(dest_dir)
@@ -3265,16 +3243,16 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     writeLines(lines, con = path, useBytes = TRUE)
   }
 
-  assert_cohort_json_exists <- function(source_id, index_def_dir, label) {
-    src <- resolve_index_definition_path(source_id, index_def_dir, imported_definition_dir)
+  assert_cohort_json_exists <- function(source_id, label) {
+    src <- resolve_acquired_definition_path(source_id, imported_definition_dir)
     if (is.na(src) || !file.exists(src)) {
-      stop(sprintf("%s cohort JSON not found for source %s in %s", label, source_id, index_def_dir))
+      stop(sprintf("%s cohort JSON not found for acquired source %s", label, source_id))
     }
     invisible(src)
   }
 
-  cohort_json_exists <- function(source_id, index_def_dir) {
-    src <- resolve_index_definition_path(source_id, index_def_dir, imported_definition_dir)
+  cohort_json_exists <- function(source_id) {
+    src <- resolve_acquired_definition_path(source_id, imported_definition_dir)
     !is.na(src) && file.exists(src)
   }
 
@@ -3977,10 +3955,6 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     )
   }
 
-  study_base_dir <- ""
-  if (nzchar(studyAgentBaseDir)) {
-    study_base_dir <- normalizePath(studyAgentBaseDir, winslash = "/", mustWork = FALSE)
-  }
 
   if (!is.null(analyticSettingsDescription)) {
     analyticSettingsDescription <- trimws(as.character(analyticSettingsDescription))
@@ -3991,7 +3965,6 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     if (!nzchar(analyticSettingsDescriptionPath)) analyticSettingsDescriptionPath <- NULL
   }
 
-  outputDir <- resolve_path(outputDir, study_base_dir)
   outputDir <- normalizePath(outputDir, winslash = "/", mustWork = FALSE)
   if (isTRUE(reset) && dir.exists(outputDir)) {
     ok <- TRUE
@@ -4002,21 +3975,13 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
   }
 
   base_dir <- outputDir
-  incidence_base_dir <- resolve_path(incidenceOutputDir, study_base_dir)
-  incidence_base_dir <- normalizePath(incidence_base_dir, winslash = "/", mustWork = FALSE)
-  index_dir <- resolve_path(indexDir, study_base_dir)
-  index_dir <- normalizePath(index_dir, winslash = "/", mustWork = FALSE)
+  incidence_base_dir <- normalizePath(incidenceOutputDir, winslash = "/", mustWork = FALSE)
   analytic_settings_description_path_resolved <- if (is.null(analyticSettingsDescriptionPath)) {
     NULL
   } else {
-    normalizePath(resolve_path(analyticSettingsDescriptionPath, study_base_dir), winslash = "/", mustWork = FALSE)
+    normalizePath(analyticSettingsDescriptionPath, winslash = "/", mustWork = FALSE)
   }
-  if (!dir.exists(index_dir) && !is_absolute_path(indexDir) && !nzchar(studyAgentBaseDir)) {
-    alt <- file.path(getwd(), "OHDSI-Study-Agent", indexDir)
-    if (dir.exists(alt)) index_dir <- normalizePath(alt, winslash = "/", mustWork = FALSE)
-  }
-  index_def_dir <- file.path(index_dir, "definitions")
-  if (!dir.exists(index_def_dir)) stop(sprintf("Missing phenotype index definitions folder: %s", index_def_dir))
+  # Cohort definitions are acquired into workflow-local storage; no external index directory is required.
 
   output_dir <- file.path(base_dir, "outputs")
   selected_dir <- file.path(base_dir, "selected-cohorts")
@@ -4059,10 +4024,6 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
   cm_defaults_path <- file.path(output_dir, "cm_analysis_defaults.json")
   cm_analysis_json_path <- file.path(analysis_settings_dir, "cmAnalysis.json")
   cm_analysis_template_path <- system.file("templates", "cmAnalysis_template.json", package = "slashOhdsiStrategusAssistant")
-  if (!nzchar(cm_analysis_template_path)) {
-    cm_analysis_template_path <- resolve_path("mcp_server/prompts/cohort_methods/cmAnalysis_template.json", study_base_dir)
-    cm_analysis_template_path <- normalizePath(cm_analysis_template_path, winslash = "/", mustWork = FALSE)
-  }
   if (!file.exists(cm_analysis_template_path)) {
     cm_analysis_template_path <- NA_character_
   }
@@ -4699,12 +4660,7 @@ Available exploration commands
   cached_incidence_outcome_selection <- load_cached_role_selection(incidence_cohort_id_map_path, "outcome", incidence_selected_outcome_dir)
 
   if (interactive) {
-    banner_path <- resolve_path(bannerPath, study_base_dir)
-    banner_path <- normalizePath(banner_path, winslash = "/", mustWork = FALSE)
-    if (!file.exists(banner_path) && !is_absolute_path(bannerPath) && !nzchar(studyAgentBaseDir)) {
-      alt <- file.path(getwd(), "OHDSI-Study-Agent", bannerPath)
-      if (file.exists(alt)) banner_path <- normalizePath(alt, winslash = "/", mustWork = FALSE)
-    }
+    banner_path <- normalizePath(bannerPath, winslash = "/", mustWork = FALSE)
     if (isTRUE(showBanner) && file.exists(banner_path)) {
       cat(paste(readLines(banner_path, warn = FALSE), collapse = "\n"), "\n")
     }
@@ -5194,8 +5150,8 @@ Available exploration commands
   }
 
   validate_target_id <- function(target_id) {
-    if (!cohort_json_exists(target_id, index_def_dir)) {
-      return(sprintf("Target cohort ID %s was not found in %s. Please enter a valid target cohort ID.", target_id, index_def_dir))
+    if (!cohort_json_exists(target_id)) {
+      return(sprintf("Target cohort ID %s was not found in workflow-local acquired definitions. Please enter a valid target cohort ID.", target_id))
     }
     NULL
   }
@@ -5203,8 +5159,8 @@ Available exploration commands
     if (target_id == comparator_id) {
       return("Target and comparator cohort IDs must be different.")
     }
-    if (!cohort_json_exists(comparator_id, index_def_dir)) {
-      return(sprintf("Comparator cohort ID %s was not found in %s. Please enter a valid comparator cohort ID.", comparator_id, index_def_dir))
+    if (!cohort_json_exists(comparator_id)) {
+      return(sprintf("Comparator cohort ID %s was not found in workflow-local acquired definitions. Please enter a valid comparator cohort ID.", comparator_id))
     }
     NULL
   }
@@ -5212,12 +5168,12 @@ Available exploration commands
     if (any(outcome_ids %in% c(target_id, comparator_id))) {
       return("Outcome cohort IDs must be distinct from the target and comparator cohort IDs.")
     }
-    missing_outcomes <- outcome_ids[!vapply(outcome_ids, cohort_json_exists, logical(1), index_def_dir = index_def_dir)]
+    missing_outcomes <- outcome_ids[!vapply(outcome_ids, cohort_json_exists, logical(1))]
     if (length(missing_outcomes) > 0) {
       return(sprintf(
         "Outcome cohort ID(s) %s were not found in %s. Please enter valid outcome cohort IDs.",
         paste(missing_outcomes, collapse = ", "),
-        index_def_dir
+        "workflow-local acquired definitions"
       ))
     }
     NULL
@@ -5270,6 +5226,7 @@ Available exploration commands
       prompt_database_imports = prompt_database_cohort_imports,
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_target_selection)) next
@@ -5386,7 +5343,7 @@ Available exploration commands
   }
   new_target_id <- map_ids(selected_target_id)
   target_source_for_copy <- target_rec$selected_source_id %||% selected_target_id
-  copy_cohort_json_multi(target_source_for_copy, new_target_id, c(selected_target_dir, selected_dir), index_def_dir, imported_def_dir = imported_definition_dir)
+  copy_cohort_json_multi(target_source_for_copy, new_target_id, c(selected_target_dir, selected_dir), imported_def_dir = imported_definition_dir)
   ensure_patched_outputs_cleared()
   improvements_results$target <- if (isTRUE(skip_phenotype_improvements)) {
     skipped_role_improvements(
@@ -5440,6 +5397,7 @@ Available exploration commands
       prompt_database_imports = prompt_database_cohort_imports,
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_comparator_selection)) next
@@ -5515,7 +5473,7 @@ Available exploration commands
   selected_comparator_id <- as.integer(comparatorCohortId)
   new_comparator_id <- map_ids(selected_comparator_id)
   comparator_source_for_copy <- comparator_rec$selected_source_id %||% selected_comparator_id
-  copy_cohort_json_multi(comparator_source_for_copy, new_comparator_id, c(selected_comparator_dir, selected_dir), index_def_dir, imported_def_dir = imported_definition_dir)
+  copy_cohort_json_multi(comparator_source_for_copy, new_comparator_id, c(selected_comparator_dir, selected_dir), imported_def_dir = imported_definition_dir)
   improvements_results$comparator <- if (isTRUE(skip_phenotype_improvements)) {
     skipped_role_improvements(
       role_key = "comparator",
@@ -5568,6 +5526,7 @@ Available exploration commands
       prompt_database_imports = prompt_database_cohort_imports,
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_outcome_selection)) next
@@ -5755,7 +5714,7 @@ Available exploration commands
 
   for (i in seq_along(selected_outcome_ids)) {
     source_for_copy <- outcome_source_ids_for_copy[[min(i, length(outcome_source_ids_for_copy))]] %||% selected_outcome_ids[[i]]
-    copy_cohort_json_multi(source_for_copy, new_outcome_ids[[i]], c(selected_outcome_dir, selected_dir), index_def_dir, imported_def_dir = imported_definition_dir)
+    copy_cohort_json_multi(source_for_copy, new_outcome_ids[[i]], c(selected_outcome_dir, selected_dir), imported_def_dir = imported_definition_dir)
   }
   improvements_results$outcome <- if (isTRUE(skip_phenotype_improvements)) {
     skipped_role_improvements(
@@ -6272,7 +6231,7 @@ Available exploration commands
         analytic_settings_description <- trimws(as.character(analytic_settings_description))
         analytic_settings_input_method <- as.character(cached_inputs$analytic_settings_input_method %||% "typed_text")
       } else if (!is.null(analytic_settings_description_path) && nzchar(trimws(as.character(analytic_settings_description_path)))) {
-        cached_description_path <- normalizePath(resolve_path(as.character(analytic_settings_description_path), study_base_dir), winslash = "/", mustWork = FALSE)
+        cached_description_path <- normalizePath(as.character(analytic_settings_description_path), winslash = "/", mustWork = FALSE)
         if (!file.exists(cached_description_path)) {
           stop(sprintf("Cached analytic settings description file not found: %s", cached_description_path))
         }
@@ -7272,30 +7231,13 @@ Keeper review saved: %s reviewed row(s)
   state$keeper_case_review_error_count <- if (inherits(keeper_case_review_result, "error")) 1L else as.integer(keeper_case_review_result$error_count %||% 0L)
   write_json(state, state_path)
 
-  package_root <- resolve_path("R/slashOhdsiStrategusAssistant", study_base_dir)
-  if (!dir.exists(package_root)) {
-    alt <- file.path(getwd(), "R", "slashOhdsiStrategusAssistant")
-    if (dir.exists(alt)) package_root <- alt
-  }
-  package_root <- normalizePath(package_root, winslash = "/", mustWork = FALSE)
-
-  script_header <- c(
-    "# Generated by the slashOhdsiStrategusAssistant cohort-methods workflow shell",
-    "# Edit values as needed and run in order.",
-    "# Current stage: manual shell output with ACP/MCP status artifacts.",
-    ""
-  )
   package_loader_lines <- c(
-    sprintf("package_root <- '%s'", package_root),
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE) && dir.exists(package_root)) {",
-    "    devtools::load_all(package_root)",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all(package_root) is unavailable: ', package_root)",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)"
   )
+
 
   script_02 <- c(
     script_header,
