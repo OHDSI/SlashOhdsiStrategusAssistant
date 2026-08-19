@@ -24,7 +24,7 @@
   source_id <- as.character(source_id %||% "")
   imported_def_dir <- as.character(imported_def_dir %||% "")
   if (!nzchar(imported_def_dir)) {
-    stop("Provide imported_def_dir for cached database cohort definitions.")
+    stop("Provide imported_def_dir for cached acquired cohort definitions.")
   }
   file.path(imported_def_dir, sprintf("%s.json", gsub(":", "__", source_id, fixed = TRUE)))
 }
@@ -39,6 +39,49 @@
     stop("Provide imported_def_dir for cached cohort definition aliases.")
   }
   file.path(imported_def_dir, sprintf("%s.json", cohort_definition_id))
+}
+
+.studyAgentSlashImportedCohortAliasConflictPath <- function(cohort_definition_id, imported_def_dir) {
+  file.path(imported_def_dir, sprintf("%s.alias-conflict", as.integer(cohort_definition_id)))
+}
+
+.studyAgentSlashCanonicalCohortJson <- function(cohort_json) {
+  jsonlite::toJSON(cohort_json, pretty = FALSE, auto_unbox = TRUE, null = "null")
+}
+
+.studyAgentSlashSameCohortJsonFile <- function(path, cohort_json) {
+  if (!file.exists(path)) return(FALSE)
+  existing <- tryCatch(jsonlite::read_json(path, simplifyVector = FALSE), error = function(e) NULL)
+  !is.null(existing) && identical(
+    .studyAgentSlashCanonicalCohortJson(existing),
+    .studyAgentSlashCanonicalCohortJson(cohort_json)
+  )
+}
+
+# Numeric aliases are conveniences only. When providers reuse a numeric ID with
+# different JSON, namespaced source IDs remain usable and bare IDs become unsafe.
+.studyAgentSlashCacheCohortDefinition <- function(imported, imported_def_dir) {
+  dir.create(imported_def_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_path <- .studyAgentSlashImportedCohortDefinitionPath(imported$source_id, imported_def_dir)
+  alias_path <- .studyAgentSlashImportedCohortAliasPath(imported$cohort_definition_id, imported_def_dir)
+  if (file.exists(cache_path) && !.studyAgentSlashSameCohortJsonFile(cache_path, imported$cohort_json)) {
+    stop(sprintf("Cached cohort source %s already exists with different Circe JSON.", imported$source_id))
+  }
+  if (!file.exists(cache_path)) {
+    jsonlite::write_json(imported$cohort_json, cache_path, pretty = TRUE, auto_unbox = TRUE)
+  }
+  alias_status <- "created"
+  if (file.exists(alias_path) && !.studyAgentSlashSameCohortJsonFile(alias_path, imported$cohort_json)) {
+    conflict_path <- .studyAgentSlashImportedCohortAliasConflictPath(imported$cohort_definition_id, imported_def_dir)
+    writeLines(sprintf("Numeric cohort ID %s has more than one acquired definition. Use a namespaced source ID.", imported$cohort_definition_id), conflict_path)
+    alias_path <- NA_character_
+    alias_status <- "conflict"
+  } else if (!file.exists(alias_path)) {
+    jsonlite::write_json(imported$cohort_json, alias_path, pretty = TRUE, auto_unbox = TRUE)
+  } else {
+    alias_status <- "reused"
+  }
+  list(cache_path = cache_path, alias_path = alias_path, alias_status = alias_status)
 }
 
 .studyAgentSlashFormatDbConnectError <- function(error, connectionDetails = NULL) {
@@ -232,14 +275,11 @@
     cohort_database_schema = cohort_database_schema,
     cohort_definition_id = cohort_definition_id
   )
-  dir.create(imported_def_dir, recursive = TRUE, showWarnings = FALSE)
-  cache_path <- .studyAgentSlashImportedCohortDefinitionPath(imported$source_id, imported_def_dir)
-  alias_path <- .studyAgentSlashImportedCohortAliasPath(imported$cohort_definition_id, imported_def_dir)
-  jsonlite::write_json(imported$cohort_json, cache_path, pretty = TRUE, auto_unbox = TRUE)
-  jsonlite::write_json(imported$cohort_json, alias_path, pretty = TRUE, auto_unbox = TRUE)
-  imported$cache_path <- cache_path
-  imported$alias_path <- alias_path
-  imported$metadata$cache_path <- cache_path
+  cached <- .studyAgentSlashCacheCohortDefinition(imported, imported_def_dir)
+  imported$cache_path <- cached$cache_path
+  imported$alias_path <- cached$alias_path
+  imported$metadata$cache_path <- cached$cache_path
+  imported$metadata$alias_status <- cached$alias_status
   imported
 }
 
@@ -288,7 +328,8 @@
 
 .studyAgentSlashImportedFileSourceId <- function(source_type,
                                                  cohort_definition_id,
-                                                 slug) {
+                                                 slug,
+                                                 source_path = NULL) {
   source_type <- trimws(as.character(source_type %||% "file"))
   if (!(source_type %in% c("file", "directory"))) {
     stop("source_type must be 'file' or 'directory'.")
@@ -298,6 +339,10 @@
     stop("cohort_definition_id must be a positive integer.")
   }
   slug <- .studyAgentSlashSanitizeCohortSourceSlug(slug)
+  if (!is.null(source_path) && file.exists(source_path)) {
+    token <- substr(unname(tools::md5sum(source_path))[[1]], 1L, 12L)
+    slug <- sprintf("%s-%s", slug, token)
+  }
   sprintf("%s:%s:%s", if (identical(source_type, "directory")) "dir" else "file", cohort_definition_id, slug)
 }
 
@@ -321,7 +366,7 @@
     explicit_id = cohort_definition_id
   )
   file_slug <- .studyAgentSlashSanitizeCohortSourceSlug(basename(source_path))
-  source_id <- .studyAgentSlashImportedFileSourceId(source_type, inferred_id, file_slug)
+  source_id <- .studyAgentSlashImportedFileSourceId(source_type, inferred_id, file_slug, source_path = source_path)
   cohort_name <- as.character(
     cohort_json$name %||%
       cohort_json$Name %||%
@@ -358,15 +403,91 @@
     source_type = source_type,
     cohort_definition_id = cohort_definition_id
   )
-  dir.create(imported_def_dir, recursive = TRUE, showWarnings = FALSE)
-  cache_path <- .studyAgentSlashImportedCohortDefinitionPath(imported$source_id, imported_def_dir)
-  alias_path <- .studyAgentSlashImportedCohortAliasPath(imported$cohort_definition_id, imported_def_dir)
-  jsonlite::write_json(imported$cohort_json, cache_path, pretty = TRUE, auto_unbox = TRUE)
-  jsonlite::write_json(imported$cohort_json, alias_path, pretty = TRUE, auto_unbox = TRUE)
-  imported$cache_path <- cache_path
-  imported$alias_path <- alias_path
-  imported$metadata$cache_path <- cache_path
+  cached <- .studyAgentSlashCacheCohortDefinition(imported, imported_def_dir)
+  imported$cache_path <- cached$cache_path
+  imported$alias_path <- cached$alias_path
+  imported$metadata$cache_path <- cached$cache_path
+  imported$metadata$alias_status <- cached$alias_status
   imported
+}
+
+
+.studyAgentSlashImportPhenotypeLibraryCohortDefinitions <- function(cohort_ids,
+                                                                     imported_def_dir) {
+  if (!requireNamespace("PhenotypeLibrary", quietly = TRUE)) {
+    stop("PhenotypeLibrary must be installed to select a Phenotype Library cohort.")
+  }
+  cohort_ids <- unique(suppressWarnings(as.integer(cohort_ids)))
+  cohort_ids <- cohort_ids[!is.na(cohort_ids) & cohort_ids > 0L]
+  if (length(cohort_ids) == 0L) stop("Select at least one positive Phenotype Library cohort ID.")
+  definitions <- PhenotypeLibrary::getPlCohortDefinitionSet(cohortIds = cohort_ids)
+  required <- c("cohortId", "cohortName", "json", "sql")
+  missing <- setdiff(required, names(definitions %||% list()))
+  if (is.null(definitions) || length(missing) > 0L) {
+    stop(sprintf("PhenotypeLibrary response is missing required columns: %s", paste(missing, collapse = ", ")))
+  }
+  returned_ids <- suppressWarnings(as.integer(definitions$cohortId))
+  if (anyNA(returned_ids) || anyDuplicated(returned_ids) || !setequal(returned_ids, cohort_ids)) {
+    stop("PhenotypeLibrary did not return exactly one definition for every selected cohort ID.")
+  }
+  definitions <- definitions[match(cohort_ids, returned_ids), , drop = FALSE]
+  phenotype_log <- tryCatch(PhenotypeLibrary::getPhenotypeLog(), error = function(e) NULL)
+  log_ids <- if (!is.null(phenotype_log) && "cohortId" %in% names(phenotype_log)) suppressWarnings(as.integer(phenotype_log$cohortId)) else integer(0)
+  lapply(seq_len(nrow(definitions)), function(i) {
+    row <- definitions[i, , drop = FALSE]
+    cohort_id <- as.integer(row$cohortId[[1]])
+    cohort_json <- tryCatch(jsonlite::fromJSON(as.character(row$json[[1]]), simplifyVector = FALSE), error = function(e) {
+      stop(sprintf("PhenotypeLibrary cohort %s returned invalid JSON: %s", cohort_id, conditionMessage(e)))
+    })
+    .studyAgentSlashValidateCohortDefinitionJson(cohort_json, sprintf("PhenotypeLibrary cohort %s", cohort_id))
+    source_id <- sprintf("pl:%s", cohort_id)
+    log_row <- if (length(log_ids)) phenotype_log[match(cohort_id, log_ids), , drop = FALSE] else NULL
+    logic_description <- if (!is.null(log_row) && "logicDescription" %in% names(log_row)) as.character(log_row$logicDescription[[1]]) else NA_character_
+    imported <- list(source_id = source_id, cohort_definition_id = cohort_id,
+      cohort_name = as.character(row$cohortName[[1]]), cohort_json = cohort_json)
+    cached <- .studyAgentSlashCacheCohortDefinition(imported, imported_def_dir)
+    list(source_id = source_id, cohort_definition_id = cohort_id, cohort_name = imported$cohort_name,
+      cohort_json = cohort_json, cache_path = cached$cache_path, alias_path = cached$alias_path,
+      metadata = list(source_type = "phenotype_library", source_id = source_id, cohort_definition_id = cohort_id,
+        cohort_name = imported$cohort_name, logic_description = logic_description, sql = as.character(row$sql[[1]]),
+        cache_path = cached$cache_path, alias_status = cached$alias_status, computability_status = "circe_json"))
+  })
+}
+
+.studyAgentSlashAcpRecommendationJson <- function(recommendation) {
+  json_value <- recommendation$circe_json %||% recommendation$circeJson %||% recommendation$json %||% recommendation$cohort_json
+  if (is.null(json_value)) return(NULL)
+  if (is.character(json_value) && !nzchar(trimws(json_value[[1]]))) return(NULL)
+  cohort_json <- tryCatch(if (is.character(json_value)) jsonlite::fromJSON(json_value[[1]], simplifyVector = FALSE) else json_value, error = function(e) NULL)
+  if (is.null(cohort_json)) return(NULL)
+  tryCatch({ .studyAgentSlashValidateCohortDefinitionJson(cohort_json, "ACP recommendation"); cohort_json }, error = function(e) NULL)
+}
+
+.studyAgentSlashAcpRecommendationCohortId <- function(recommendation, cohort_json = NULL) {
+  values <- c(recommendation$cohort_id, recommendation$cohortId, recommendation$id, recommendation$phenotype_id)
+  for (value in values) {
+    text <- trimws(as.character(value %||% ""))
+    if (grepl("^ohdsi:[0-9]+$", text)) text <- sub("^ohdsi:", "", text)
+    id <- suppressWarnings(as.integer(text))
+    if (!is.na(id) && id > 0L) return(id)
+  }
+  .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort_json))
+}
+
+.studyAgentSlashImportAcpCohortDefinition <- function(recommendation, imported_def_dir) {
+  cohort_json <- .studyAgentSlashAcpRecommendationJson(recommendation)
+  if (is.null(cohort_json)) stop("ACP recommendation did not include a computable Circe JSON definition.")
+  cohort_id <- .studyAgentSlashAcpRecommendationCohortId(recommendation, cohort_json)
+  source_id <- sprintf("acp:%s", cohort_id)
+  imported <- list(source_id = source_id, cohort_definition_id = cohort_id, cohort_json = cohort_json)
+  cached <- .studyAgentSlashCacheCohortDefinition(imported, imported_def_dir)
+  upstream_id <- as.character(recommendation$phenotype_id %||% recommendation$cohort_id %||% recommendation$cohortId %||% NA_character_)
+  list(source_id = source_id, cohort_definition_id = cohort_id, cohort_json = cohort_json,
+    cache_path = cached$cache_path, alias_path = cached$alias_path,
+    metadata = list(source_type = "acp", source_id = source_id, upstream_id = upstream_id,
+      cohort_definition_id = cohort_id, cohort_name = as.character(recommendation$phenotype_name %||% recommendation$cohortName %||% sprintf("Cohort %s", cohort_id)),
+      logic_description = as.character(recommendation$justification %||% NA_character_), cache_path = cached$cache_path,
+      alias_status = cached$alias_status, computability_status = "circe_json"))
 }
 
 .studyAgentSlashListLocalCohortDefinitionFiles <- function(directory,

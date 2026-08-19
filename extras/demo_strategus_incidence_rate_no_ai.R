@@ -1,37 +1,38 @@
-### Demo / test: no-AI `slashOhdsiStrategusAssistant::runStrategusIncidenceShell()`
-
-## This example deliberately runs without ACP/AI support. It uses direct cohort
-## import, deterministic in-shell help, and local Strategus execution artifacts.
-## Run it from the repo root or use the same parent-renv `.Rprofile` setup as the
-## other R demos.
+# Demo: no-AI Strategus incidence workflow
+#
+# Run this script from any writable directory after installing
+# slashOhdsiStrategusAssistant. During cohort selection choose `pl` to browse an
+# installed PhenotypeLibrary, `file`/`dir` for Circe JSON, or `db` for an existing
+# SIMPLE_EXPRESSION database cohort definition.
 
 library(slashOhdsiStrategusAssistant)
 
-## Next line commented out, see https://github.com/OHDSI/StudyAgent/issues/78
-### Sys.setenv(PHENOTYPE_INDEX_DIR = repo_file("data", "phenotype_index_cipher_omop"))
+# outputDir controls the workflow artifacts and the default Strategus work/results roots.
+demo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+banner_path <- system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant")
+if (!nzchar(banner_path)) stop("Installed package banner asset was not found.")
 
-### Optional reset from a prior run.
-# reset_demo_output_dir(repo_file("demo-strategus-cohort-incidence"), prompt = TRUE)
+output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence-no-ai")
 
-## Run a local shell workflow to specify and execute an incidence-rate analysis.
+# To start from scratch, uncomment the next line. It removes only this demo output.
+# unlink(output_dir, recursive = TRUE, force = TRUE)
+
 slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-  outputDir = "demo-strategus-cohort-incidence",
+  outputDir = output_dir,
   aiSupport = "disabled",
-  studyAgentBaseDir = repo_root,
-  ## Next line commented out, see https://github.com/OHDSI/StudyAgent/issues/78
-  ## indexDir = "data/phenotype_index_cipher_omop",
-  showBanner = FALSE,
-  executionTableDisplay = "viewer"
+  bannerPath = banner_path,
+  showBanner = TRUE,
+  executionTableDisplay = "console"
 )
 
-## Resume a local no-AI workflow from cached artifacts.
+# Resume a prior run:
 # slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-#   outputDir = "demo-strategus-cohort-incidence",
+#   outputDir = output_dir,
 #   aiSupport = "disabled",
-#   studyAgentBaseDir = repo_root,
 #   resume = TRUE,
 #   allowCache = TRUE,
 #   promptOnCache = TRUE,
-#   interactive = TRUE,
-#   showBanner = FALSE
+#   bannerPath = banner_path,
+#   showBanner = TRUE,
+#   executionTableDisplay = "console"
 # )

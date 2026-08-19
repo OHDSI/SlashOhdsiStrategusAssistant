@@ -1,19 +1,23 @@
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 .studyAgentSlashImportedSourceIdPattern <- function() {
-  "^(db:[A-Za-z][A-Za-z0-9_]*:[0-9]+|file:[0-9]+:[A-Za-z0-9_.-]+|dir:[0-9]+:[A-Za-z0-9_.-]+)$"
+  "^(db:[A-Za-z][A-Za-z0-9_]*:[0-9]+|file:[0-9]+:[A-Za-z0-9_.-]+|dir:[0-9]+:[A-Za-z0-9_.-]+|pl:[0-9]+|acp:[0-9]+)$"
 }
 
-.studyAgentSlashPhenotypeDefinitionPath <- function(phenotype_id, index_def_dir, imported_def_dir = NULL) {
+.studyAgentSlashPhenotypeDefinitionPath <- function(phenotype_id, imported_def_dir = NULL) {
   phenotype_id <- as.character(phenotype_id %||% "")
   if (grepl(.studyAgentSlashImportedSourceIdPattern(), phenotype_id)) {
     return(.studyAgentSlashImportedCohortDefinitionPath(phenotype_id, imported_def_dir))
   }
-  file.path(index_def_dir, sprintf("%s.json", gsub(":", "__", phenotype_id, fixed = TRUE)))
+  alias_conflict <- .studyAgentSlashImportedCohortAliasConflictPath(phenotype_id, imported_def_dir)
+  if (file.exists(alias_conflict)) {
+    stop(sprintf("Cohort ID %s is ambiguous across acquired providers; use its namespaced source ID.", phenotype_id))
+  }
+  .studyAgentSlashImportedCohortAliasPath(phenotype_id, imported_def_dir)
 }
 
 .studyAgentSlashStopIfUnsupportedSelected <- function(phenotype_ids, role_label) {
-  supported <- grepl("^ohdsi:[0-9]+$", phenotype_ids %||% character(0)) |
+  supported <- grepl("^(ohdsi|pl|acp):[0-9]+$", phenotype_ids %||% character(0)) |
     grepl(.studyAgentSlashImportedSourceIdPattern(), phenotype_ids %||% character(0))
   unsupported <- phenotype_ids[!supported]
   if (length(unsupported) > 0) {
@@ -33,8 +37,8 @@
 .studyAgentSlashDefaultCohortIdFromSource <- function(source_id) {
   source_id <- trimws(as.character(source_id %||% ""))
   if (!nzchar(source_id)) return(NA_integer_)
-  if (grepl("^ohdsi:[0-9]+$", source_id)) {
-    return(suppressWarnings(as.integer(sub("^ohdsi:", "", source_id))))
+  if (grepl("^(ohdsi|pl|acp):[0-9]+$", source_id)) {
+    return(suppressWarnings(as.integer(sub("^(ohdsi|pl|acp):", "", source_id))))
   }
   if (grepl("^db:[A-Za-z][A-Za-z0-9_]*:[0-9]+$", source_id)) {
     return(suppressWarnings(as.integer(sub("^db:[A-Za-z][A-Za-z0-9_]*:([0-9]+)$", "\\1", source_id))))
@@ -60,8 +64,8 @@
   as.integer(derived)
 }
 
-.studyAgentSlashCopyCohortJsonMulti <- function(source_id, dest_id, dest_dirs, index_def_dir, imported_def_dir = NULL, ensure_dir) {
-  src <- .studyAgentSlashPhenotypeDefinitionPath(source_id, index_def_dir, imported_def_dir = imported_def_dir)
+.studyAgentSlashCopyCohortJsonMulti <- function(source_id, dest_id, dest_dirs, imported_def_dir = NULL, ensure_dir) {
+  src <- .studyAgentSlashPhenotypeDefinitionPath(source_id, imported_def_dir = imported_def_dir)
   if (!file.exists(src)) stop(sprintf("Cohort JSON not found: %s", src))
   dests <- character(0)
   for (dest_dir in dest_dirs) {
@@ -159,18 +163,19 @@
   }
   repeat {
     prompt <- if (isTRUE(allow_index)) {
-      sprintf("Source for %s cohort [ai=agentic search (default), file=JSON file, dir=directory, db=database cohort]: ", role_label)
+      sprintf("Source for %s cohort [ai=agentic search (default), pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
     } else {
-      sprintf("Source for %s cohort [file=JSON file, dir=directory, db=database cohort]: ", role_label)
+      sprintf("Source for %s cohort [pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
     }
     entered <- trimws(readline_with_navigation(prompt))
     if (is_back_signal(entered)) return(entered)
     lowered <- tolower(entered)
     if (isTRUE(allow_index) && (!nzchar(lowered) || lowered %in% c("ai", "index", "search", "s", "recommend", "agentic"))) return("index")
     if (lowered %in% c("db", "database", "existing")) return("database")
+    if (lowered %in% c("pl", "phenotypelibrary", "phenotype_library", "library")) return("phenotype_library")
     if (lowered %in% c("file", "json", "local")) return("file")
     if (lowered %in% c("dir", "directory", "folder")) return("directory")
-    cat(if (isTRUE(allow_index)) "Choose ai, file, dir, or db, or press Enter for the default.\n" else "Choose file, dir, or db.\n")
+    cat(if (isTRUE(allow_index)) "Choose ai, pl, file, dir, or db, or press Enter for the default.\n" else "Choose pl, file, dir, or db.\n")
   }
 }
 
@@ -488,12 +493,13 @@
                                                          role_label,
                                                          allow_multiple = FALSE,
                                                          interactive = TRUE,
-                                                         step_messages = list(database = NULL, file = NULL, directory = NULL),
+                                                         step_messages = list(database = NULL, file = NULL, directory = NULL, phenotype_library = NULL),
                                                          prompt_database_imports,
                                                          prompt_file_imports,
                                                          prompt_directory_imports,
+                                                         prompt_phenotype_library_imports = NULL,
                                                          selection_record_from_import = .studyAgentSlashSelectionRecordFromImport) {
-  if (!(source_mode %in% c("database", "file", "directory"))) return(NULL)
+  if (!(source_mode %in% c("database", "file", "directory", "phenotype_library"))) return(NULL)
   if (isTRUE(interactive)) {
     step_message <- step_messages[[source_mode]] %||% NULL
     if (nzchar(trimws(as.character(step_message %||% "")))) {
@@ -504,7 +510,8 @@
     source_mode,
     database = prompt_database_imports(role_label, allow_multiple = allow_multiple),
     file = prompt_file_imports(role_label, allow_multiple = allow_multiple),
-    directory = prompt_directory_imports(role_label, allow_multiple = allow_multiple)
+    directory = prompt_directory_imports(role_label, allow_multiple = allow_multiple),
+    phenotype_library = prompt_phenotype_library_imports(role_label, allow_multiple = allow_multiple)
   )
   if (inherits(imported, "workflow_navigation_signal")) return(imported)
   if (is.null(imported) || length(imported) == 0) {

@@ -1,15 +1,13 @@
 #' Interactive shell to generate Strategus CohortIncidence scripts
-#' @param outputDir directory where scripts and artifacts will be written
+#' @param outputDir absolute workflow directory where scripts, artifacts, and the default Strategus `work/` and `results/` directories will be written
 #' @param acpUrl ACP base URL
 #' @param studyIntent study intent text
 #' @param topK number of candidates retrieved from MCP search
 #' @param maxResults max phenotypes to show
 #' @param candidateLimit max candidates to pass to LLM
-#' @param indexDir phenotype index directory (contains definitions/)
 #' @param interactive whether to prompt for inputs
-#' @param bannerPath optional path to ASCII banner
+#' @param bannerPath path to an ASCII banner; defaults to the installed package banner
 #' @param showBanner when FALSE, suppress the startup ASCII banner
-#' @param studyAgentBaseDir base directory to resolve relative paths (outputDir, indexDir, bannerPath)
 #' @param reset when TRUE, delete outputDir before running
 #' @param allowCache reuse cached artifacts when present
 #' @param promptOnCache prompt before using cached artifacts
@@ -18,6 +16,14 @@
 #' @param executionTableDisplay execution-menu table display preference: `console`, `viewer`, or `auto`
 #' @param aiSupport ACP/AI mode: `disabled` (default), `enabled`, or `auto`
 #' @param checkRuntime when TRUE (default), require the release-tested HADES runtime before starting
+#' @details
+#' Cohort definitions are acquired into workflow-local artifacts. With AI disabled,
+#' choose a Phenotype Library cohort, a local Circe JSON file, a directory of such
+#' files, or an existing database cohort definition. ACP recommendations must provide
+#' computable Circe JSON, which is saved locally before Strategus scripts are generated.
+#' See `system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")`
+#' for the installed acquisition guide.
+#' @seealso [system.file()] to locate the installed `phenotype-acquisition.md` guide.
 #' @return invisible list with output paths
 #' @export
 runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incidence",
@@ -26,11 +32,9 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
                                       topK = 20,
                                       maxResults = 20,
                                       candidateLimit = 5,
-                                      indexDir = Sys.getenv("PHENOTYPE_INDEX_DIR", "data/phenotype_index"),
                                       interactive = TRUE,
-                                      bannerPath = "ohdsi-logo-ascii.txt",
+                                      bannerPath = system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant"),
                                       showBanner = TRUE,
-                                      studyAgentBaseDir = Sys.getenv("STUDY_AGENT_BASE_DIR", ""),
                                       reset = FALSE,
                                       allowCache = TRUE,
                                       promptOnCache = TRUE,
@@ -497,12 +501,8 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     path
   }
 
-  phenotype_definition_path <- function(phenotype_id, index_def_dir, imported_def_dir = NULL) {
-    phenotype_id <- as.character(phenotype_id %||% "")
-    if (grepl("^(db:[A-Za-z][A-Za-z0-9_]*:[0-9]+|file:[0-9]+:[A-Za-z0-9_.-]+|dir:[0-9]+:[A-Za-z0-9_.-]+)$", phenotype_id)) {
-      return(.studyAgentSlashImportedCohortDefinitionPath(phenotype_id, imported_def_dir))
-    }
-    file.path(index_def_dir, sprintf("%s.json", gsub(":", "__", phenotype_id, fixed = TRUE)))
+  phenotype_definition_path <- function(phenotype_id, imported_def_dir = NULL) {
+    .studyAgentSlashPhenotypeDefinitionPath(phenotype_id, imported_def_dir = imported_def_dir)
   }
 
   stop_if_unsupported_selected <- function(phenotype_ids, role_label) {
@@ -528,12 +528,13 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     .studyAgentSlashDefaultCohortIdsFromSources(source_ids, role_label = role_label)
   }
 
-  copy_cohort_json_multi <- function(source_id, dest_id, dest_dirs, index_def_dir, imported_def_dir = NULL) {
-    .studyAgentSlashCopyCohortJsonMulti(source_id, dest_id, dest_dirs, index_def_dir, imported_def_dir = imported_def_dir, ensure_dir = ensure_dir)
+  copy_cohort_json_multi <- function(source_id, dest_id, dest_dirs, imported_def_dir = NULL) {
+    .studyAgentSlashCopyCohortJsonMulti(source_id, dest_id, dest_dirs, imported_def_dir = imported_def_dir, ensure_dir = ensure_dir)
   }
 
   selection_record_from_recommendation <- function(rec) {
-    .studyAgentSlashSelectionRecordFromRecommendation(rec)
+    imported <- .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir)
+    imported$metadata
   }
 
   selection_record_from_import <- function(imported) {
@@ -631,6 +632,24 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     )
   }
 
+
+  prompt_phenotype_library_imports <- function(role_label, allow_multiple = FALSE) {
+    if (!requireNamespace("PhenotypeLibrary", quietly = TRUE)) {
+      stop("PhenotypeLibrary must be installed to select a Phenotype Library cohort.")
+    }
+    log <- PhenotypeLibrary::getPhenotypeLog()
+    if (is.null(log) || nrow(log) == 0L) stop("PhenotypeLibrary did not return any cohort definitions.")
+    ids <- suppressWarnings(as.integer(log$cohortId))
+    labels <- sprintf("%s (ID %s)", as.character(log$cohortName), ids)
+    if (isTRUE(interactive)) {
+      picks <- utils::select.list(labels, multiple = isTRUE(allow_multiple), title = sprintf("Select %s Phenotype Library cohort%s", role_label, if (isTRUE(allow_multiple)) "s" else ""))
+      if (!length(picks) || !any(nzchar(picks))) return(NULL)
+      ids <- ids[match(picks, labels)]
+    } else {
+      ids <- ids[[1]]
+    }
+    .studyAgentSlashImportPhenotypeLibraryCohortDefinitions(ids, imported_definition_dir)
+  }
   apply_action <- function(obj, action) {
     path <- action$path %||% ""
     value <- action$value
@@ -687,11 +706,6 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     set_in(obj, segs, value)
   }
 
-  study_base_dir <- ""
-  if (nzchar(studyAgentBaseDir)) {
-    study_base_dir <- normalizePath(studyAgentBaseDir, winslash = "/", mustWork = FALSE)
-  }
-  outputDir <- resolve_path(outputDir, study_base_dir)
   outputDir <- normalizePath(outputDir, winslash = "/", mustWork = FALSE)
   if (isTRUE(reset) && dir.exists(outputDir)) {
     ok <- TRUE
@@ -703,14 +717,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     }
   }
   base_dir <- outputDir
-  index_dir <- resolve_path(indexDir, study_base_dir)
-  index_dir <- normalizePath(index_dir, winslash = "/", mustWork = FALSE)
-  if (!dir.exists(index_dir) && !is_absolute_path(indexDir) && !nzchar(studyAgentBaseDir)) {
-    alt <- file.path(getwd(), "OHDSI-Study-Agent", indexDir)
-    if (dir.exists(alt)) index_dir <- normalizePath(alt, winslash = "/", mustWork = FALSE)
-  }
-  index_def_dir <- file.path(index_dir, "definitions")
-  if (!dir.exists(index_def_dir)) stop(sprintf("Missing phenotype index definitions folder: %s", index_def_dir))
+  # Cohort definitions are acquired into workflow-local storage; no external index directory is required.
 
   output_dir <- file.path(base_dir, "outputs")
   selected_dir <- file.path(base_dir, "selected-cohorts")
@@ -1341,12 +1348,7 @@ Available exploration commands
   }
 
   if (interactive) {
-    banner_path <- resolve_path(bannerPath, study_base_dir)
-    banner_path <- normalizePath(banner_path, winslash = "/", mustWork = FALSE)
-    if (!file.exists(banner_path) && !is_absolute_path(bannerPath) && !nzchar(studyAgentBaseDir)) {
-      alt <- file.path(getwd(), "OHDSI-Study-Agent", bannerPath)
-      if (file.exists(alt)) banner_path <- normalizePath(alt, winslash = "/", mustWork = FALSE)
-    }
+    banner_path <- normalizePath(bannerPath, winslash = "/", mustWork = FALSE)
     if (isTRUE(showBanner) && file.exists(banner_path)) {
       cat(paste(readLines(banner_path, warn = FALSE), collapse = "\n"), "\n")
     }
@@ -1550,11 +1552,13 @@ Available exploration commands
       step_messages = list(
         database = "Step 2: Target cohort import from database",
         file = "Step 2: Target cohort import from file",
-        directory = "Step 2: Target cohort import from directory"
+        directory = "Step 2: Target cohort import from directory",
+        phenotype_library = "Step 2: Target cohort import from Phenotype Library"
       ),
       prompt_database_imports = prompt_database_cohort_imports,
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_target_selection)) next
@@ -1702,8 +1706,9 @@ Available exploration commands
       }
     }
 
+    if (length(selected_target_records) > 0) selected_ids_target <- vapply(selected_target_records, function(x) as.character(x$source_id %||% ""), character(1))
     selected_ids_target <- as.character(selected_ids_target)
-    if (length(selected_ids_target) == 0) stop("No target cohort selected.")
+    if (length(selected_ids_target) == 0 || any(!nzchar(selected_ids_target))) stop("No target cohort selected.")
     if (length(selected_outcome_records) == 0) selected_ids_outcome <- character(0)
 
     use_mapping <- FALSE
@@ -1736,7 +1741,7 @@ Available exploration commands
 
     stop_if_unsupported_selected(selected_ids_target, "target")
     new_ids_target <- map_ids(selected_ids_target)
-    copy_cohort_json_multi(selected_ids_target, new_ids_target, c(selected_target_dir, selected_dir), index_def_dir, imported_def_dir = imported_definition_dir)
+    copy_cohort_json_multi(selected_ids_target, new_ids_target, c(selected_target_dir, selected_dir), imported_def_dir = imported_definition_dir)
     break
   }
 
@@ -1854,11 +1859,13 @@ Available exploration commands
       step_messages = list(
         database = "Step 5: Outcome cohort import from database",
         file = "Step 5: Outcome cohort import from file",
-        directory = "Step 5: Outcome cohort import from directory"
+        directory = "Step 5: Outcome cohort import from directory",
+        phenotype_library = "Step 5: Outcome cohort import from Phenotype Library"
       ),
       prompt_database_imports = prompt_database_cohort_imports,
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_outcome_selection)) next
@@ -2011,12 +2018,13 @@ Available exploration commands
       }
     }
 
+    if (length(selected_outcome_records) > 0) selected_ids_outcome <- vapply(selected_outcome_records, function(x) as.character(x$source_id %||% ""), character(1))
     selected_ids_outcome <- as.character(selected_ids_outcome)
-    if (length(selected_ids_outcome) == 0) stop("No outcome cohorts selected.")
+    if (length(selected_ids_outcome) == 0 || any(!nzchar(selected_ids_outcome))) stop("No outcome cohorts selected.")
     stop_if_unsupported_selected(selected_ids_outcome, "outcome")
     new_ids_outcome <- map_ids(selected_ids_outcome)
     for (i in seq_along(new_ids_outcome)) {
-      copy_cohort_json_multi(selected_ids_outcome[[i]], new_ids_outcome[[i]], c(selected_outcome_dir, selected_dir), index_def_dir, imported_def_dir = imported_definition_dir)
+      copy_cohort_json_multi(selected_ids_outcome[[i]], new_ids_outcome[[i]], c(selected_outcome_dir, selected_dir), imported_def_dir = imported_definition_dir)
     }
 
     do_outcome_improvements <- !isTRUE(skip_phenotype_improvements)
@@ -2221,7 +2229,6 @@ Available exploration commands
     analysis_settings_dir = analysis_settings_dir,
     time_at_risk_settings_path = time_at_risk_settings_path,
     incidence_time_at_risk = incidence_time_at_risk,
-    index_def_dir = index_def_dir,
     imported_definition_dir = imported_definition_dir,
     intent_split_path = intent_split_path,
     recommendations_target_path = recs_target_path,
@@ -2659,21 +2666,19 @@ Keeper review saved: %s reviewed row(s)
   script_01 <- c(
     script_header,
     "`%||%` <- function(x, y) if (is.null(x)) y else x",
-    "phenotype_definition_path <- function(phenotype_id, index_def_dir, imported_def_dir = NULL) {",
-    "  phenotype_id <- as.character(phenotype_id %||% '')",
-    "  if (grepl('^db:[A-Za-z][A-Za-z0-9_]*:[0-9]+$', phenotype_id)) {",
-    "    if (is.null(imported_def_dir) || !nzchar(imported_def_dir)) stop('Missing imported cohort definition cache directory.')",
-    "    return(file.path(imported_def_dir, sprintf('%s.json', gsub(':', '__', phenotype_id, fixed = TRUE))))",
-    "  }",
-    "  file.path(index_def_dir, sprintf('%s.json', gsub(':', '__', phenotype_id, fixed = TRUE)))",
+    "phenotype_definition_path <- function(phenotype_id, imported_def_dir) {",
+    "  if (is.null(imported_def_dir) || !nzchar(imported_def_dir)) stop('Missing acquired cohort definition cache directory.')",
+    "  source <- as.character(phenotype_id %||% '')",
+    "  if (grepl('^[0-9]+$', source)) return(file.path(imported_def_dir, sprintf('%s.json', source)))",
+    "  file.path(imported_def_dir, sprintf('%s.json', gsub(':', '__', source, fixed = TRUE)))",
     "}",
     "stop_if_unsupported_selected <- function(phenotype_ids, role_label) {",
-    "  supported <- grepl('^ohdsi:[0-9]+$', phenotype_ids %||% character(0)) | grepl('^db:[A-Za-z][A-Za-z0-9_]*:[0-9]+$', phenotype_ids %||% character(0))",
+    "  supported <- grepl('^(pl|acp):[0-9]+$', phenotype_ids %||% character(0)) | grepl('^(db:[A-Za-z][A-Za-z0-9_]*:[0-9]+|file:[0-9]+:[A-Za-z0-9_.-]+|dir:[0-9]+:[A-Za-z0-9_.-]+)$', phenotype_ids %||% character(0))",
     "  unsupported <- phenotype_ids[!supported]",
     "  if (length(unsupported) > 0) stop(sprintf('Selected %s cohort source ids include unsupported values (%s).', role_label, paste(unique(unsupported), collapse = ', ')))",
     "}",
-    "copy_cohort_json <- function(source_id, dest_id, dest_dirs, index_def_dir, imported_def_dir = NULL) {",
-    "  src <- phenotype_definition_path(source_id, index_def_dir, imported_def_dir = imported_def_dir)",
+    "copy_cohort_json <- function(source_id, dest_id, dest_dirs, imported_def_dir = NULL) {",
+    "  src <- phenotype_definition_path(source_id, imported_def_dir = imported_def_dir)",
     "  if (!file.exists(src)) stop('Cohort JSON not found: ', src)",
     "  for (dest_dir in dest_dirs) {",
     "    dir.create(dest_dir, recursive = TRUE, showWarnings = FALSE)",
@@ -2683,7 +2688,6 @@ Keeper review saved: %s reviewed row(s)
     "}",
     sprintf("base_dir <- '%s'", base_dir),
     "output_dir <- file.path(base_dir, 'outputs')",
-    sprintf("index_def_dir <- '%s'", index_def_dir),
     "imported_def_dir <- file.path(base_dir, 'imported-cohort-definitions')",
     "selected_dir <- file.path(base_dir, 'selected-cohorts')",
     "selected_target_dir <- file.path(base_dir, 'selected-target-cohorts')",
@@ -2706,8 +2710,8 @@ Keeper review saved: %s reviewed row(s)
     "if (length(outcome_ids) != length(new_ids_outcome)) stop('Selection manifest outcome_ids are inconsistent.')",
     "stop_if_unsupported_selected(target_ids, 'target')",
     "stop_if_unsupported_selected(outcome_ids, 'outcome')",
-    "for (i in seq_along(target_ids)) copy_cohort_json(target_ids[[i]], new_ids_target[[i]], c(selected_target_dir, selected_dir), index_def_dir, imported_def_dir = imported_def_dir)",
-    "for (i in seq_along(outcome_ids)) copy_cohort_json(outcome_ids[[i]], new_ids_outcome[[i]], c(selected_outcome_dir, selected_dir), index_def_dir, imported_def_dir = imported_def_dir)",
+    "for (i in seq_along(target_ids)) copy_cohort_json(target_ids[[i]], new_ids_target[[i]], c(selected_target_dir, selected_dir), imported_def_dir = imported_def_dir)",
+    "for (i in seq_along(outcome_ids)) copy_cohort_json(outcome_ids[[i]], new_ids_outcome[[i]], c(selected_outcome_dir, selected_dir), imported_def_dir = imported_def_dir)",
     "id_map <- data.frame(",
     "  original_id = c(target_ids, outcome_ids),",
     "  cohort_id = c(new_ids_target, new_ids_outcome),",
@@ -2834,13 +2838,8 @@ Keeper review saved: %s reviewed row(s)
     "library(CirceR)",
     "library(SqlRender)",
     "",
-    "# loads the Strategus workflow assistant package when working from the repo",
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE)) {",
-    "    devtools::load_all('OHDSI-Study-Agent/R/slashOhdsiStrategusAssistant')",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all is unavailable.')",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)",
     "library(jsonlite)",
@@ -2929,13 +2928,8 @@ Keeper review saved: %s reviewed row(s)
     "library(jsonlite)",
     "`%||%` <- function(x, y) if (is.null(x)) y else x",
     "",
-    "# loads the Strategus workflow assistant package when working from the repo",
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE)) {",
-    "    devtools::load_all('OHDSI-Study-Agent/R/slashOhdsiStrategusAssistant')",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all is unavailable.')",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)",
     "",
@@ -2988,13 +2982,8 @@ Keeper review saved: %s reviewed row(s)
     "library(jsonlite)",
     "`%||%` <- function(x, y) if (is.null(x)) y else x",
     "",
-    "# loads the Strategus workflow assistant package when working from the repo",
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE)) {",
-    "    devtools::load_all('OHDSI-Study-Agent/R/slashOhdsiStrategusAssistant')",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all is unavailable.')",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)",
     "",
@@ -3050,13 +3039,8 @@ Keeper review saved: %s reviewed row(s)
     "library(DatabaseConnector)",
     "library(dplyr)",
     "",
-    "# loads the Strategus workflow assistant package when working from the repo",
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE)) {",
-    "    devtools::load_all('OHDSI-Study-Agent/R/slashOhdsiStrategusAssistant')",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all is unavailable.')",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)",
     "library(jsonlite)",
@@ -3123,13 +3107,8 @@ Keeper review saved: %s reviewed row(s)
     "library(DatabaseConnector)",
     "library(dplyr)",
     "",
-    "# loads the Strategus workflow assistant package when working from the repo",
     "if (!requireNamespace('slashOhdsiStrategusAssistant', quietly = TRUE)) {",
-    "  if (requireNamespace('devtools', quietly = TRUE)) {",
-    "    devtools::load_all('OHDSI-Study-Agent/R/slashOhdsiStrategusAssistant')",
-    "  } else {",
-    "    stop('slashOhdsiStrategusAssistant is not installed and devtools::load_all is unavailable.')",
-    "  }",
+    "  stop('Install slashOhdsiStrategusAssistant before running this generated script.')",
     "}",
     "library(slashOhdsiStrategusAssistant)",
     "library(jsonlite)",
