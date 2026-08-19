@@ -1613,9 +1613,11 @@
 #' choose a Phenotype Library cohort, a local Circe JSON file, a directory of such
 #' files, or an existing database cohort definition. ACP recommendations must provide
 #' computable Circe JSON, which is saved locally before Strategus scripts are generated.
-#' See `system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")`
-#' for the installed acquisition guide.
-#' @seealso [system.file()] to locate the installed `phenotype-acquisition.md` guide.
+#' See `system.file("doc", "R_STRATEGUS_COHORT_METHODS_SHELL.md", package = "slashOhdsiStrategusAssistant")`
+#' for the installed Cohort Methods workflow guide, and
+#' `system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")`
+#' for shared cohort-acquisition details.
+#' @seealso [system.file()] to locate installed workflow and acquisition guides.
 #' @return invisible list with output paths
 #' @export
 runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-methods",

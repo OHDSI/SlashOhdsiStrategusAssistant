@@ -71,6 +71,12 @@ is installed.
 A PDF version of the package manual will be available after the package is published:
 
 - Package manual: [GitHub Pages package site](https://ohdsi.github.io/SlashOhdsiStrategusAssistant/)
+- [Incidence shell workflow guide](https://github.com/OHDSI/SlashOhdsiStrategusAssistant/blob/main/inst/doc/R_STRATEGUS_INCIDENCE_SHELL.md)
+- [Cohort Methods shell workflow guide](https://github.com/OHDSI/SlashOhdsiStrategusAssistant/blob/main/inst/doc/R_STRATEGUS_COHORT_METHODS_SHELL.md)
+- [Cohort-definition acquisition guide](https://github.com/OHDSI/SlashOhdsiStrategusAssistant/blob/main/inst/doc/phenotype-acquisition.md)
+
+The three Markdown guides are installed with the package and can also be located from
+R with `system.file("doc", ..., package = "slashOhdsiStrategusAssistant")`.
 
 ### Cohort-definition acquisition
 
