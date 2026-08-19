@@ -116,9 +116,11 @@ Cohort definitions are acquired into workflow-local artifacts. With AI disabled,
 choose a Phenotype Library cohort, a local Circe JSON file, a directory of such
 files, or an existing database cohort definition. ACP recommendations must provide
 computable Circe JSON, which is saved locally before Strategus scripts are generated.
-See \code{system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")}
-for the installed acquisition guide.
+See \code{system.file("doc", "R_STRATEGUS_COHORT_METHODS_SHELL.md", package = "slashOhdsiStrategusAssistant")}
+for the installed Cohort Methods workflow guide, and
+\code{system.file("doc", "phenotype-acquisition.md", package = "slashOhdsiStrategusAssistant")}
+for shared cohort-acquisition details.
 }
 \seealso{
-\code{\link[=system.file]{system.file()}} to locate the installed \code{phenotype-acquisition.md} guide.
+\code{\link[=system.file]{system.file()}} to locate installed workflow and acquisition guides.
 }
