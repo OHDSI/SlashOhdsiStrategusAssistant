@@ -57,6 +57,8 @@ The package is written in R and uses the [OHDSI HADES ecosystem](https://ohdsi.g
 Install the package and its HADES dependencies, then inspect the active runtime:
 
 ```r
+# install.packages("devtools")
+devtools::install_github("ohdsi/slashOhdsiStrategusAssistant")
 library(slashOhdsiStrategusAssistant)
 strategusRuntimeReport()
 ```
@@ -65,6 +67,24 @@ Start either `runStrategusIncidenceShell()` or
 `runStrategusCohortMethodsShell()`. Both default to `aiSupport = "disabled"`; set it
 to `"enabled"` to require ACP or `"auto"` to use ACP when its optional client package
 is installed.
+
+(Advanced) If you are manually updating to a newer version rather than the recommend standard  renv approach: 
+```
+package_name <- "slashOhdsiStrategusAssistant"
+library_loc <- ""  # fill in the location
+if (paste0("package:", package_name) %in% search()) {
+  detach(paste0("package:", package_name), unload = TRUE, character.only = TRUE)
+}
+
+if (package_name %in% loadedNamespaces()) {
+  unloadNamespace(package_name)
+}
+
+if (dir.exists(file.path(library_loc, package_name))) {
+  remove.packages(package_name, lib = library_loc)
+}
+```
+
 
 ## User Documentation
 
