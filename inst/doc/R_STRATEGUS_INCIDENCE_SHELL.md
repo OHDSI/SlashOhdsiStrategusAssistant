@@ -192,3 +192,9 @@ The format matches `strategus-db-details.json`. Example for a postgres-backed co
 - Inline Keeper review uses bounded stage gates rather than a fully generic rewind. Users can skip or rerun domains, inspect generated artifacts, adjust review settings, and inspect saved reviewed rows.
 - If no Keeper artifacts exist yet, the shell now suppresses the reuse/resume prompts instead of asking about caches unconditionally.
 - If the initial phenotype recommendations are not acceptable, the shell can request a second window of candidates and then fall back to advisory guidance.
+
+When AI recommendations do not fit a target or outcome, enter `create` at the source
+prompt to use the review-gated `phenotype_make_computable` flow. The shell never chooses
+scope or concepts automatically; it persists the checklist, candidate review package,
+reviewed policy, Capr source, Circe JSON, and technical validation evidence under the
+workflow directory before using the resulting Circe definition.

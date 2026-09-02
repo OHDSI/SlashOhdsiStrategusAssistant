@@ -297,3 +297,9 @@ Current Keeper specifics:
 - When direct acquisition begins from a blank study-intent prompt, the shell still requires a persisted study intent before downstream configuration continues; it derives that default from the confirmed target/comparator/outcome statements and lets the user edit it before saving.
 - `resume = TRUE` uses the persisted workflow step-state and project manifest, so previously skipped optional steps remain skipped unless the user explicitly resets them.
 - If no Keeper artifacts exist yet, the shell suppresses the inline Keeper reuse/resume prompts instead of asking about caches unconditionally.
+
+When AI recommendations do not fit a target, comparator, or outcome, enter `create` at
+the source prompt to use the review-gated `phenotype_make_computable` flow. The shell
+requires an explicitly confirmed scope and an explicitly approved concept-set policy;
+it does not infer either one. Generated definition and review artifacts are persisted in
+the workflow directory and the resulting Circe JSON is treated as a local cohort source.

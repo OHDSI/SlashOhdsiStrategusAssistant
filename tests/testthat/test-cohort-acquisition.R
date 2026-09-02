@@ -94,3 +94,29 @@ test_that("local source identifiers include a content token", {
   source_id <- slashOhdsiStrategusAssistant:::.studyAgentSlashReadFileCohortDefinition(path)$source_id
   expect_match(source_id, "^file:88:same-[a-f0-9]{12}$")
 })
+
+test_that("AI cohort source selector exposes reviewed phenotype creation", {
+  choice <- slashOhdsiStrategusAssistant:::.studyAgentSlashChooseSelectionSourceMode(
+    role_label = "target",
+    allow_index = TRUE,
+    interactive = TRUE,
+    readline_with_navigation = function(prompt) "create",
+    is_back_signal = function(value) FALSE
+  )
+  expect_identical(choice, "create")
+})
+
+test_that("create acquisition dispatch preserves a handled reviewed result", {
+  result <- slashOhdsiStrategusAssistant:::.studyAgentSlashAcquireImportedRoleSelection(
+    source_mode = "create",
+    role_label = "target",
+    interactive = TRUE,
+    prompt_database_imports = function(...) NULL,
+    prompt_file_imports = function(...) NULL,
+    prompt_directory_imports = function(...) NULL,
+    prompt_phenotype_library_imports = function(...) NULL,
+    prompt_create_computable = function(...) list(action = "handled", imported = list(), selected_source_ids = "acp:99", selected_ids = 99L, records = list()),
+    selection_record_from_import = function(x) x
+  )
+  expect_identical(result$selected_source_ids, "acp:99")
+})
