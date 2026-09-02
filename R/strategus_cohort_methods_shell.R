@@ -5229,6 +5229,7 @@ Available exploration commands
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
       prompt_phenotype_library_imports = prompt_phenotype_library_imports,
+      prompt_create_computable = function(role_label, allow_multiple = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, switch(role_label, target = targetStatement, comparator = comparatorStatement, outcome = outcomeStatement), dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json) },
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_target_selection)) next
@@ -5400,6 +5401,7 @@ Available exploration commands
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
       prompt_phenotype_library_imports = prompt_phenotype_library_imports,
+      prompt_create_computable = function(role_label, allow_multiple = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, switch(role_label, target = targetStatement, comparator = comparatorStatement, outcome = outcomeStatement), dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json) },
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_comparator_selection)) next
@@ -5529,6 +5531,7 @@ Available exploration commands
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
       prompt_phenotype_library_imports = prompt_phenotype_library_imports,
+      prompt_create_computable = function(role_label, allow_multiple = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, switch(role_label, target = targetStatement, comparator = comparatorStatement, outcome = outcomeStatement), dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json) },
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_outcome_selection)) next

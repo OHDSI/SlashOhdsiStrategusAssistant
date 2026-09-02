@@ -132,3 +132,20 @@
     message = message
   )
 }
+
+.studyAgentSlashAcpPhenotypeMakeComputable <- function(client, narrative_statement,
+                                                       confirmed_scope = FALSE, scope = NULL,
+                                                       concept_review_mode = "required",
+                                                       concept_sets = list(), review_delivery = "auto",
+                                                       candidate_limit = 20) {
+  slashOhdsiAcpClient::acp_phenotype_make_computable(
+    client = client,
+    narrative_statement = narrative_statement,
+    confirmed_scope = confirmed_scope,
+    scope = scope,
+    concept_review_mode = concept_review_mode,
+    concept_sets = concept_sets,
+    review_delivery = review_delivery,
+    candidate_limit = candidate_limit
+  )
+}

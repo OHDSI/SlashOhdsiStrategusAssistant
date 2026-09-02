@@ -163,19 +163,20 @@
   }
   repeat {
     prompt <- if (isTRUE(allow_index)) {
-      sprintf("Source for %s cohort [ai=agentic search (default), pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
+      sprintf("Source for %s cohort [ai=agentic search (default), create=new definition, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
     } else {
       sprintf("Source for %s cohort [pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
     }
     entered <- trimws(readline_with_navigation(prompt))
     if (is_back_signal(entered)) return(entered)
     lowered <- tolower(entered)
+    if (isTRUE(allow_index) && lowered %in% c("create", "new", "make", "computable")) return("create")
     if (isTRUE(allow_index) && (!nzchar(lowered) || lowered %in% c("ai", "index", "search", "s", "recommend", "agentic"))) return("index")
     if (lowered %in% c("db", "database", "existing")) return("database")
     if (lowered %in% c("pl", "phenotypelibrary", "phenotype_library", "library")) return("phenotype_library")
     if (lowered %in% c("file", "json", "local")) return("file")
     if (lowered %in% c("dir", "directory", "folder")) return("directory")
-    cat(if (isTRUE(allow_index)) "Choose ai, pl, file, dir, or db, or press Enter for the default.\n" else "Choose pl, file, dir, or db.\n")
+    cat(if (isTRUE(allow_index)) "Choose ai, create, pl, file, dir, or db, or press Enter for the default.\n" else "Choose pl, file, dir, or db.\n")
   }
 }
 
@@ -498,8 +499,9 @@
                                                          prompt_file_imports,
                                                          prompt_directory_imports,
                                                          prompt_phenotype_library_imports = NULL,
+                                                         prompt_create_computable = NULL,
                                                          selection_record_from_import = .studyAgentSlashSelectionRecordFromImport) {
-  if (!(source_mode %in% c("database", "file", "directory", "phenotype_library"))) return(NULL)
+  if (!(source_mode %in% c("database", "file", "directory", "phenotype_library", "create"))) return(NULL)
   if (isTRUE(interactive)) {
     step_message <- step_messages[[source_mode]] %||% NULL
     if (nzchar(trimws(as.character(step_message %||% "")))) {
@@ -511,9 +513,12 @@
     database = prompt_database_imports(role_label, allow_multiple = allow_multiple),
     file = prompt_file_imports(role_label, allow_multiple = allow_multiple),
     directory = prompt_directory_imports(role_label, allow_multiple = allow_multiple),
-    phenotype_library = prompt_phenotype_library_imports(role_label, allow_multiple = allow_multiple)
+    phenotype_library = prompt_phenotype_library_imports(role_label, allow_multiple = allow_multiple),
+    create = prompt_create_computable(role_label, allow_multiple = allow_multiple)
   )
   if (inherits(imported, "workflow_navigation_signal")) return(imported)
+  if (is.list(imported) && identical(imported$action %||% "", "handled")) return(imported)
+  if (is.list(imported) && identical(imported$action %||% "", "retry")) return(imported)
   if (is.null(imported) || length(imported) == 0) {
     return(list(action = "retry", imported = imported))
   }
@@ -525,4 +530,87 @@
     selected_ids = as.integer(vapply(imported_items, function(item) item$cohort_definition_id, integer(1))),
     records = lapply(imported_items, selection_record_from_import)
   )
+}
+
+.studyAgentSlashCreateComputableRoleSelection <- function(role_label,
+                                                          role_statement,
+                                                          client,
+                                                          output_dir,
+                                                          imported_definition_dir,
+                                                          interactive = TRUE,
+                                                          readline_with_navigation = readline,
+                                                          is_back_signal = function(value) FALSE,
+                                                          write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
+  if (!isTRUE(interactive)) stop("Creating a phenotype definition requires interactive scope and concept-set review.")
+  if (!slashOhdsiAcpClient::acp_is_connected(client)) stop("ACP bridge unavailable; connect ACP before creating a phenotype definition.")
+  artifact_dir <- file.path(output_dir, "phenotype-make-computable", tolower(role_label))
+  dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
+  prompt <- function(text) {
+    value <- readline_with_navigation(text)
+    if (is_back_signal(value)) return(value)
+    trimws(as.character(value %||% ""))
+  }
+  narrative <- prompt(sprintf("Narrative statement for the new %s phenotype: ", tolower(role_label)))
+  if (is_back_signal(narrative)) return(narrative)
+  if (!nzchar(narrative)) return(list(action = "retry"))
+  checklist <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = FALSE)
+  write_json(checklist, file.path(artifact_dir, "scope-checklist.json"))
+  cat("\nACP returned a scope checklist. No definition has been created.\n")
+  cat("Provide a JSON file containing every explicitly confirmed scope field, then review it before continuing.\n")
+  scope_path <- prompt("Confirmed scope JSON path (or /back): ")
+  if (is_back_signal(scope_path)) return(scope_path)
+  if (!file.exists(scope_path)) stop("Confirmed scope JSON file was not found.")
+  scope <- jsonlite::read_json(scope_path, simplifyVector = FALSE)
+  approved_scope <- prompt("I confirm every scope value above is deliberate [type CONFIRM]: ")
+  if (!identical(approved_scope, "CONFIRM")) return(list(action = "retry"))
+  review <- .studyAgentSlashAcpPhenotypeMakeComputable(
+    client, narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
+    concept_review_mode = "required", review_delivery = "session", candidate_limit = 20
+  )
+  write_json(review, file.path(artifact_dir, "concept-review-response.json"))
+  if (!identical(review$status %||% "", "needs_concept_review")) {
+    cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir))
+    return(list(action = "retry"))
+  }
+  review_urls <- review$review_urls %||% list()
+  if (nzchar(as.character(review_urls$candidates_csv %||% ""))) {
+    slashOhdsiAcpClient::acp_download(client, review_urls$candidates_csv, file.path(artifact_dir, "concept-review.csv"))
+  }
+  if (nzchar(as.character(review_urls$manifest %||% ""))) {
+    slashOhdsiAcpClient::acp_download(client, review_urls$manifest, file.path(artifact_dir, "concept-review-manifest.json"))
+  }
+  cat(sprintf("\nReview candidates and manifest were written to %s.\n", artifact_dir))
+  cat("Edit/review policies outside the shell. The concept-set JSON must preserve explicit inclusion, descendant, mapped, and exclusion choices.\n")
+  concept_sets_path <- prompt("Explicitly reviewed concept_sets JSON path (or /back): ")
+  if (is_back_signal(concept_sets_path)) return(concept_sets_path)
+  if (!file.exists(concept_sets_path)) stop("Reviewed concept_sets JSON file was not found.")
+  concept_sets_payload <- jsonlite::read_json(concept_sets_path, simplifyVector = FALSE)
+  concept_sets <- concept_sets_payload$concept_sets %||% concept_sets_payload
+  if (!is.list(concept_sets) || !length(concept_sets)) stop("Reviewed concept_sets JSON must contain a non-empty concept_sets array.")
+  approved_concepts <- prompt("I explicitly approve this exact reviewed concept-set policy [type APPROVE]: ")
+  if (!identical(approved_concepts, "APPROVE")) return(list(action = "retry"))
+  emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(
+    client, narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
+    concept_review_mode = "provided_only", concept_sets = concept_sets
+  )
+  write_json(emitted, file.path(artifact_dir, "emission-response.json"))
+  if (!identical(emitted$status %||% "", "ok")) {
+    cat(sprintf("ACP did not emit a definition (%s); inspect %s.\n", emitted$status %||% "unknown", artifact_dir))
+    return(list(action = "retry"))
+  }
+  capr <- emitted$capr %||% list()
+  writeLines(as.character(capr$source %||% ""), file.path(artifact_dir, "phenotype_definition.R"))
+  circe_json <- emitted$circe_json %||% emitted$circeJson
+  cohort_json <- if (is.character(circe_json)) jsonlite::fromJSON(circe_json, simplifyVector = FALSE) else circe_json
+  .studyAgentSlashValidateCohortDefinitionJson(cohort_json, "phenotype_make_computable result")
+  generated_id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort_json))
+  imported <- .studyAgentSlashImportAcpCohortDefinition(list(
+    phenotype_id = as.character(generated_id), phenotype_name = narrative,
+    justification = "Created through the review-gated phenotype_make_computable ACP flow.", circe_json = cohort_json
+  ), imported_definition_dir)
+  imported$metadata$source_type <- "phenotype_make_computable"
+  imported$metadata$artifact_dir <- artifact_dir
+  imported$metadata$validation <- emitted$validation %||% NULL
+  list(action = "handled", imported = list(imported), selected_source_ids = imported$source_id,
+       selected_ids = imported$cohort_definition_id, records = list(imported$metadata))
 }
