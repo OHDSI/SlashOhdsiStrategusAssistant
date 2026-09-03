@@ -139,3 +139,18 @@
   }
   .studyAgentSlashCreateComputableRoleSelectionFresh(role_label, role_statement, client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json)
 }
+
+.studyAgentSlashPmcPrintScope <- function(scope) {
+  cat("\nScope to confirm:\n")
+  cat(sprintf("- Index event: %s\n", scope$index_event %||% ""))
+  for (name in names(scope$criterion_domains %||% list())) cat(sprintf("- Criterion: %s (%s)\n", name, scope$criterion_domains[[name]]))
+  for (name in names(scope$criterion_vocabularies %||% list())) cat(sprintf("- Vocabulary restriction: %s = %s\n", name, paste(unlist(scope$criterion_vocabularies[[name]]), collapse = ", ")))
+  cat(sprintf("- Entry-event limit: %s\n- Prior observation: %s days\n- Index-day boundary: %s\n- Windows: %s\n- Exit strategy: %s\n- Visit overlap: %s\n",
+    scope$entry_limit %||% "", scope$prior_observation %||% "", scope$index_day_boundary %||% "", scope$windows %||% "",
+    if (is.list(scope$exit_strategy)) jsonlite::toJSON(scope$exit_strategy, auto_unbox = TRUE) else scope$exit_strategy %||% "", scope$visit_overlap %||% FALSE))
+  if (is.list(scope$supporting_condition_occurrence)) {
+    x <- scope$supporting_condition_occurrence
+    cat(sprintf("- Supporting Condition: %s, %s to %s days relative to %s\n", x$concept_set %||% "", x$start_days %||% "", x$end_days %||% "", x$anchor %||% ""))
+  }
+  if (!is.null(scope$multi_domain_entry_policy)) cat(sprintf("- Multi-domain policy: %s\n", scope$multi_domain_entry_policy))
+}

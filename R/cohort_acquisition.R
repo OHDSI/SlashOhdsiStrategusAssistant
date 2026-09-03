@@ -598,8 +598,13 @@
   }
   write_json(scope, file.path(artifact_dir, "confirmed-scope.json"))
   cat(sprintf("Confirmed scope draft written to %s.\n", file.path(artifact_dir, "confirmed-scope.json")))
+  .studyAgentSlashPmcPrintScope(scope)
   approved_scope <- prompt("I confirm every displayed scope value is deliberate [type CONFIRM]: ")
   if (!identical(approved_scope, "CONFIRM")) return(list(action = "retry"))
+  write_json(list(narrative_statement = narrative, confirmed_scope = TRUE,
+    concept_review_mode = "required", concept_build_mode = "search_only", review_delivery = "session",
+    candidate_limit = 20L, concept_sets = list(), scope = scope),
+    file.path(artifact_dir, "concept-review-request.json"))
   review <- .studyAgentSlashAcpPhenotypeMakeComputable(
     client, narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
     concept_review_mode = "required", review_delivery = "session", candidate_limit = 20
