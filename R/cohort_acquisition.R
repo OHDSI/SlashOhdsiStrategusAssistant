@@ -532,7 +532,7 @@
   )
 }
 
-.studyAgentSlashCreateComputableRoleSelection <- function(role_label,
+.studyAgentSlashCreateComputableRoleSelectionFresh <- function(role_label,
                                                           role_statement,
                                                           client,
                                                           output_dir,
@@ -605,49 +605,10 @@
     concept_review_mode = "required", review_delivery = "session", candidate_limit = 20
   )
   write_json(review, file.path(artifact_dir, "concept-review-response.json"))
-  if (!identical(review$status %||% "", "needs_concept_review")) {
-    cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir))
-    return(list(action = "retry"))
-  }
-  review_urls <- review$review_urls %||% list()
-  if (nzchar(as.character(review_urls$candidates_csv %||% ""))) {
-    slashOhdsiAcpClient::acp_download(client, review_urls$candidates_csv, file.path(artifact_dir, "concept-review.csv"))
-  }
-  if (nzchar(as.character(review_urls$manifest %||% ""))) {
-    slashOhdsiAcpClient::acp_download(client, review_urls$manifest, file.path(artifact_dir, "concept-review-manifest.json"))
-  }
-  cat(sprintf("\nReview candidates and manifest were written to %s.\n", artifact_dir))
-  cat("Edit/review policies outside the shell. The concept-set JSON must preserve explicit inclusion, descendant, mapped, and exclusion choices.\n")
-  concept_sets_path <- prompt("Explicitly reviewed concept_sets JSON path (or /back): ")
-  if (is_back_signal(concept_sets_path)) return(concept_sets_path)
-  if (!file.exists(concept_sets_path)) stop("Reviewed concept_sets JSON file was not found.")
-  concept_sets_payload <- jsonlite::read_json(concept_sets_path, simplifyVector = FALSE)
-  concept_sets <- concept_sets_payload$concept_sets %||% concept_sets_payload
-  if (!is.list(concept_sets) || !length(concept_sets)) stop("Reviewed concept_sets JSON must contain a non-empty concept_sets array.")
-  approved_concepts <- prompt("I explicitly approve this exact reviewed concept-set policy [type APPROVE]: ")
-  if (!identical(approved_concepts, "APPROVE")) return(list(action = "retry"))
-  emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(
-    client, narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
-    concept_review_mode = "provided_only", concept_sets = concept_sets
+  .studyAgentSlashPmcReviewHandoff(
+    role_label = role_label, narrative = narrative, scope = scope, review = review,
+    client = client, artifact_dir = artifact_dir, imported_definition_dir = imported_definition_dir,
+    readline_with_navigation = readline_with_navigation, is_back_signal = is_back_signal,
+    write_json = write_json
   )
-  write_json(emitted, file.path(artifact_dir, "emission-response.json"))
-  if (!identical(emitted$status %||% "", "ok")) {
-    cat(sprintf("ACP did not emit a definition (%s); inspect %s.\n", emitted$status %||% "unknown", artifact_dir))
-    return(list(action = "retry"))
-  }
-  capr <- emitted$capr %||% list()
-  writeLines(as.character(capr$source %||% ""), file.path(artifact_dir, "phenotype_definition.R"))
-  circe_json <- emitted$circe_json %||% emitted$circeJson
-  cohort_json <- if (is.character(circe_json)) jsonlite::fromJSON(circe_json, simplifyVector = FALSE) else circe_json
-  .studyAgentSlashValidateCohortDefinitionJson(cohort_json, "phenotype_make_computable result")
-  generated_id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort_json))
-  imported <- .studyAgentSlashImportAcpCohortDefinition(list(
-    phenotype_id = as.character(generated_id), phenotype_name = narrative,
-    justification = "Created through the review-gated phenotype_make_computable ACP flow.", circe_json = cohort_json
-  ), imported_definition_dir)
-  imported$metadata$source_type <- "phenotype_make_computable"
-  imported$metadata$artifact_dir <- artifact_dir
-  imported$metadata$validation <- emitted$validation %||% NULL
-  list(action = "handled", imported = list(imported), selected_source_ids = imported$source_id,
-       selected_ids = imported$cohort_definition_id, records = list(imported$metadata))
 }

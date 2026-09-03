@@ -71,10 +71,15 @@ cohort definition. `PhenotypeLibrary` is required only for the Phenotype Library
 
 In AI-enabled workflows, select `create` at a role's cohort-source prompt when the
 recommendations are not suitable. The shell calls the review-gated
-It writes a scope checklist and then asks for each supported scope decision one at a
-time. The resulting confirmed scope JSON, ACP candidate CSV and manifest are saved
-under `phenotype-make-computable/<role>/`. The shell requires explicit approval of a
-policy-bearing `concept_sets` JSON file before emission. The generated Capr source,
-Circe JSON response, and technical validation evidence are persisted; the Circe
-definition is imported as a normal local cohort source. Technical validation is not
-clinical validation.
+`phenotype_make_computable` flow and asks for each supported scope decision one at a
+time. It saves the confirmed scope, ACP response, frozen candidate CSV, manifest, and
+`review-state.json` under `phenotype-make-computable/<role>/`.
+
+Review can continue in the same shell by editing only the CSV `review_*` columns and
+returning its path, or by leaving the shell and later selecting `create` again to resume
+from those local artifacts. The shell converts the marked CSV to an exact policy object,
+displays it, saves an approval record, and requires `APPROVE` before emission. If ACP
+returns no candidates, the user can provide an Atlas/ACP concept-set JSON object or
+return to the normal cohort-source menu. Remote review URLs are not needed to resume a
+downloaded package. Generated Capr source, Circe JSON, and technical validation evidence
+are also persisted. Technical validation is not clinical validation.
