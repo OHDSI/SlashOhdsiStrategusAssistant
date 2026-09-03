@@ -71,10 +71,10 @@ cohort definition. `PhenotypeLibrary` is required only for the Phenotype Library
 
 In AI-enabled workflows, select `create` at a role's cohort-source prompt when the
 recommendations are not suitable. The shell calls the review-gated
-`phenotype_make_computable` ACP flow. It writes a scope checklist, requires a
-user-authored JSON file containing every confirmed scope field, saves the ACP candidate
-CSV and manifest under `phenotype-make-computable/<role>/`, and requires explicit
-approval of a policy-bearing `concept_sets` JSON file before emission. The generated
-Capr source, Circe JSON response, and technical validation evidence are persisted; the
-Circe definition is imported as a normal local cohort source. Technical validation is
-not clinical validation.
+It writes a scope checklist and then asks for each supported scope decision one at a
+time. The resulting confirmed scope JSON, ACP candidate CSV and manifest are saved
+under `phenotype-make-computable/<role>/`. The shell requires explicit approval of a
+policy-bearing `concept_sets` JSON file before emission. The generated Capr source,
+Circe JSON response, and technical validation evidence are persisted; the Circe
+definition is imported as a normal local cohort source. Technical validation is not
+clinical validation.

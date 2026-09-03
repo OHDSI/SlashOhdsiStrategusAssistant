@@ -548,20 +548,53 @@
   prompt <- function(text) {
     value <- readline_with_navigation(text)
     if (is_back_signal(value)) return(value)
-    trimws(as.character(value %||% ""))
+    value <- trimws(as.character(value %||% ""))
+    sub("^['\\\"](.*)['\\\"]$", "\\1", value)
   }
-  narrative <- prompt(sprintf("Narrative statement for the new %s phenotype: ", tolower(role_label)))
+  default_narrative <- trimws(as.character(role_statement %||% ""))
+  narrative <- prompt(sprintf("Narrative statement for the new %s phenotype [%s]: ", tolower(role_label), default_narrative))
   if (is_back_signal(narrative)) return(narrative)
+  if (!nzchar(narrative)) narrative <- default_narrative
   if (!nzchar(narrative)) return(list(action = "retry"))
   checklist <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = FALSE)
   write_json(checklist, file.path(artifact_dir, "scope-checklist.json"))
   cat("\nACP returned a scope checklist. No definition has been created.\n")
-  cat("Provide a JSON file containing every explicitly confirmed scope field, then review it before continuing.\n")
-  scope_path <- prompt("Confirmed scope JSON path (or /back): ")
-  if (is_back_signal(scope_path)) return(scope_path)
-  if (!file.exists(scope_path)) stop("Confirmed scope JSON file was not found.")
-  scope <- jsonlite::read_json(scope_path, simplifyVector = FALSE)
-  approved_scope <- prompt("I confirm every scope value above is deliberate [type CONFIRM]: ")
+  cat("Answer each scope question deliberately. Press /back to return to cohort-source selection.\n")
+  index_event <- prompt("Index event clinical term: ")
+  if (is_back_signal(index_event)) return(index_event)
+  domain <- prompt("Index event OMOP domain (Condition, Drug, Procedure, Measurement, Observation, Visit, or Device): ")
+  if (is_back_signal(domain)) return(domain)
+  entry_limit <- prompt("Entry-event limit [First or All]: ")
+  if (is_back_signal(entry_limit)) return(entry_limit)
+  if (!entry_limit %in% c("First", "All")) stop("Entry-event limit must be First or All.")
+  prior_observation <- suppressWarnings(as.integer(prompt("Required prior continuous observation days: ")))
+  if (is.na(prior_observation) || prior_observation < 0L) stop("Prior observation must be a non-negative integer.")
+  vocabulary <- prompt("Optional index-event vocabulary restriction (for example RxNorm; press Enter for none): ")
+  if (is_back_signal(vocabulary)) return(vocabulary)
+  exit_strategy <- prompt("Exit strategy [observation]: ")
+  if (is_back_signal(exit_strategy)) return(exit_strategy)
+  if (!nzchar(exit_strategy)) exit_strategy <- "observation"
+  if (!identical(exit_strategy, "observation")) stop("This guided path currently supports exit strategy observation only.")
+  supporting <- tolower(prompt("Require a supporting Condition occurrence around the index event? [y/N]: "))
+  if (is_back_signal(supporting)) return(supporting)
+  criterion_domains <- setNames(list(domain), index_event)
+  scope <- list(index_event = index_event, criterion_domains = criterion_domains, entry_limit = entry_limit,
+                prior_observation = prior_observation, index_day_boundary = "included", windows = "none",
+                exit_strategy = exit_strategy, visit_overlap = FALSE)
+  if (nzchar(vocabulary)) scope$criterion_vocabularies <- setNames(list(list(vocabulary)), index_event)
+  if (supporting %in% c("y", "yes")) {
+    supporting_term <- prompt("Supporting Condition clinical term: ")
+    if (is_back_signal(supporting_term)) return(supporting_term)
+    start_days <- suppressWarnings(as.integer(prompt("Supporting-condition window start days relative to index (for example -180): ")))
+    end_days <- suppressWarnings(as.integer(prompt("Supporting-condition window end days relative to index [0]: ")))
+    if (is.na(start_days) || is.na(end_days) || start_days > end_days || end_days > 0L) stop("Use integer supporting-condition bounds with start <= end <= 0.")
+    scope$criterion_domains[[supporting_term]] <- "Condition"
+    scope$supporting_condition_occurrence <- list(concept_set = supporting_term, start_days = start_days, end_days = end_days, anchor = "index_start")
+    scope$multi_domain_entry_policy <- "supporting_evidence_only"
+  }
+  write_json(scope, file.path(artifact_dir, "confirmed-scope.json"))
+  cat(sprintf("Confirmed scope draft written to %s.\n", file.path(artifact_dir, "confirmed-scope.json")))
+  approved_scope <- prompt("I confirm every displayed scope value is deliberate [type CONFIRM]: ")
   if (!identical(approved_scope, "CONFIRM")) return(list(action = "retry"))
   review <- .studyAgentSlashAcpPhenotypeMakeComputable(
     client, narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
