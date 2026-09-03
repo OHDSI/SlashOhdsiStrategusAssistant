@@ -585,8 +585,12 @@
   if (supporting %in% c("y", "yes")) {
     supporting_term <- prompt("Supporting Condition clinical term: ")
     if (is_back_signal(supporting_term)) return(supporting_term)
-    start_days <- suppressWarnings(as.integer(prompt("Supporting-condition window start days relative to index (for example -180): ")))
-    end_days <- suppressWarnings(as.integer(prompt("Supporting-condition window end days relative to index [0]: ")))
+    start_days_raw <- prompt("Supporting-condition window start days relative to index (for example -180): ")
+    if (is_back_signal(start_days_raw)) return(start_days_raw)
+    end_days_raw <- prompt("Supporting-condition window end days relative to index [0]: ")
+    if (is_back_signal(end_days_raw)) return(end_days_raw)
+    start_days <- suppressWarnings(as.integer(start_days_raw))
+    end_days <- if (!nzchar(end_days_raw)) 0L else suppressWarnings(as.integer(end_days_raw))
     if (is.na(start_days) || is.na(end_days) || start_days > end_days || end_days > 0L) stop("Use integer supporting-condition bounds with start <= end <= 0.")
     scope$criterion_domains[[supporting_term]] <- "Condition"
     scope$supporting_condition_occurrence <- list(concept_set = supporting_term, start_days = start_days, end_days = end_days, anchor = "index_start")
