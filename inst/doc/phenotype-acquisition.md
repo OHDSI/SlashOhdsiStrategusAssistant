@@ -82,4 +82,6 @@ displays it, saves an approval record, and requires `APPROVE` before emission. I
 returns no candidates, the user can provide an Atlas/ACP concept-set JSON object or
 return to the normal cohort-source menu. Remote review URLs are not needed to resume a
 downloaded package. Generated Capr source, Circe JSON, and technical validation evidence
-are also persisted. Technical validation is not clinical validation.
+are also persisted. The shell saves local and ACP validation-environment reports, warns on major Capr/CirceR/SqlRender version mismatches, and can save `cohort-definition-readable.txt` from `CirceR::cohortPrintFriendly()`. Technical validation is not clinical validation.
+
+Vocabulary review begins with 20 candidates per lane. The shell displays returned and exact matched counts plus truncation, and can request a fresh complete session through 500 candidates. For broader sets it can request a 500-candidate slice, or users should narrow the search or review in Atlas.

@@ -7165,7 +7165,8 @@ Keeper review saved: %s reviewed row(s)
         keeper_concept_set_ran <- TRUE
         cat(sprintf("Keeper concept-set state saved to: %s
 ", keeper_concept_set_state_path))
-        proceed_case_review <- prompt_yesno_strict("Proceed to Keeper case review now?", default = TRUE)
+        cat("Keeper concept sets are prepared. Case review is deferred until cohort generation has completed and cohort rows are available. Run script 03_generate_cohorts.R, then script 05_keeper_case_review.R to resume.\n")
+        proceed_case_review <- FALSE
         if (isTRUE(proceed_case_review)) {
           keeper_case_review_result <- tryCatch(
             runKeeperCaseReviewWorkflow(
@@ -7231,7 +7232,7 @@ Keeper review saved: %s reviewed row(s)
   state$keeper_concept_set_ran <- isTRUE(keeper_concept_set_ran)
   state$keeper_case_review_ran <- isTRUE(keeper_case_review_ran)
   state$keeper_concept_set_status <- if (inherits(keeper_concept_set_result, "error")) "error" else as.character(keeper_concept_set_result$status %||% if (isTRUE(keeper_concept_set_ran)) "ok" else "not_run")
-  state$keeper_case_review_status <- if (inherits(keeper_case_review_result, "error")) "error" else as.character(keeper_case_review_result$status %||% if (isTRUE(keeper_case_review_ran)) "ok" else "not_run")
+  state$keeper_case_review_status <- if (isTRUE(keeper_concept_set_ran) && is.null(keeper_case_review_result)) "deferred_pending_cohort_generation" else if (inherits(keeper_case_review_result, "error")) "error" else as.character(keeper_case_review_result$status %||% if (isTRUE(keeper_case_review_ran)) "ok" else "not_run")
   state$keeper_concept_set_error_count <- if (inherits(keeper_concept_set_result, "error")) 1L else as.integer(keeper_concept_set_result$error_count %||% 0L)
   state$keeper_case_review_error_count <- if (inherits(keeper_case_review_result, "error")) 1L else as.integer(keeper_case_review_result$error_count %||% 0L)
   write_json(state, state_path)

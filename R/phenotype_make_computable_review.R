@@ -71,18 +71,58 @@
   for (x in preview) cat(sprintf("- %s | %s | %s | %s | %s\n", x$concept_set_name, x$concept_id, x$concept_name, x$domain, x$policy))
 }
 
-.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json) {
+.studyAgentSlashPmcLocalValidationEnvironment <- function() {
+  packages <- c("Capr", "CirceR", "SqlRender")
+  list(
+    r_version = R.version.string,
+    platform = R.version$platform,
+    validation_packages = stats::setNames(lapply(packages, function(package) {
+      if (requireNamespace(package, quietly = TRUE)) as.character(utils::packageVersion(package)) else "not_installed"
+    }), packages)
+  )
+}
+
+.studyAgentSlashPmcCompareValidationEnvironment <- function(server, local) {
+  server_packages <- server$validation_packages %||% list(); local_packages <- local$validation_packages %||% list()
+  package_comparison <- lapply(c("Capr", "CirceR", "SqlRender"), function(package) {
+    server_version <- as.character(server_packages[[package]] %||% "unavailable")
+    local_version <- as.character(local_packages[[package]] %||% "not_installed")
+    server_major <- strsplit(server_version, "\\.")[[1]][1]
+    local_major <- strsplit(local_version, "\\.")[[1]][1]
+    list(package = package, server_version = server_version, local_version = local_version,
+      major_match = identical(server_major, local_major) && !server_version %in% c("unavailable", "not_installed") && !local_version %in% c("unavailable", "not_installed"))
+  })
+  issues <- Filter(function(x) !isTRUE(x$major_match), package_comparison)
+  list(status = if (length(issues)) "warning" else "compatible", server = server, local = local,
+    package_comparison = package_comparison,
+    warnings = if (length(issues)) lapply(issues, function(x) sprintf("%s server=%s local=%s", x$package, x$server_version, x$local_version)) else list())
+}
+
+.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline) {
   emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = TRUE,
     scope = scope, concept_review_mode = "provided_only", concept_sets = concept_sets)
   write_json(emitted, file.path(artifact_dir, "emission-response.json"))
   if (!identical(emitted$status %||% "", "ok")) { cat(sprintf("ACP did not emit a definition (%s); review state is preserved in %s.\n", emitted$status %||% "unknown", artifact_dir)); return(list(action = "retry")) }
+  validation <- emitted$validation %||% list(); server_environment <- validation$r_environment %||% list()
+  local_environment <- .studyAgentSlashPmcLocalValidationEnvironment()
+  comparison <- .studyAgentSlashPmcCompareValidationEnvironment(server_environment, local_environment)
+  write_json(local_environment, file.path(artifact_dir, "local-validation-environment.json"))
+  write_json(comparison, file.path(artifact_dir, "validation-environment-comparison.json"))
+  cat(sprintf("ACP technical validation: %s. R sourced the generated function, Capr wrote Circe JSON, and CirceR generated SQL.\n", validation$status %||% "reported"))
+  if (identical(comparison$status, "warning")) cat(sprintf("Validation environment warning: %s. See %s.\n", paste(unlist(comparison$warnings), collapse = "; "), file.path(artifact_dir, "validation-environment-comparison.json")))
   capr <- emitted$capr %||% list(); writeLines(as.character(capr$source %||% ""), file.path(artifact_dir, "phenotype_definition.R"))
   circe <- emitted$circe_json %||% emitted$circeJson; cohort <- if (is.character(circe)) jsonlite::fromJSON(circe, simplifyVector = FALSE) else circe
   .studyAgentSlashValidateCohortDefinitionJson(cohort, "phenotype_make_computable result")
+  readable <- tryCatch(capture.output(CirceR::cohortPrintFriendly(cohort)), error = function(error) error)
+  if (inherits(readable, "error")) cat(sprintf("Could not render a print-friendly Circe definition: %s\n", conditionMessage(readable))) else {
+    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
+    if (identical(readable_action, "v")) cat(paste(readable, collapse = "\n"), "\n")
+    if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
+  }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
     justification = "Created through the review-gated phenotype_make_computable ACP flow.", circe_json = cohort), imported_definition_dir)
-  imported$metadata$source_type <- "phenotype_make_computable"; imported$metadata$artifact_dir <- artifact_dir; imported$metadata$validation <- emitted$validation %||% NULL
+  imported$metadata$source_type <- "phenotype_make_computable"; imported$metadata$artifact_dir <- artifact_dir; imported$metadata$validation <- validation; imported$metadata$validation_environment_comparison <- comparison
   list(action = "handled", imported = list(imported), selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata))
 }
 
@@ -90,17 +130,45 @@
   prompt <- function(text) { x <- trimws(as.character(readline_with_navigation(text) %||% "")); if (is_back_signal(x)) return(x); sub("^['\\\"](.*)['\\\"]$", "\\1", x) }
   if (!identical(review$status %||% "", "needs_concept_review")) { cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir)); return(list(action = "retry")) }
   urls <- review$review_urls %||% list(); csv <- file.path(artifact_dir, "concept-review.csv"); manifest <- file.path(artifact_dir, "concept-review-manifest.json")
-  if (isTRUE(download) && nzchar(as.character(urls$candidates_csv %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$candidates_csv, csv)
-  if (isTRUE(download) && nzchar(as.character(urls$manifest %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$manifest, manifest)
+  download_review <- function() {
+    if (!isTRUE(download)) return(invisible(NULL))
+    if (nzchar(as.character(urls$candidates_csv %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$candidates_csv, csv)
+    if (nzchar(as.character(urls$manifest %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$manifest, manifest)
+  }
   .studyAgentSlashPmcSaveState(artifact_dir, role_label, narrative, scope, review, "awaiting_review", write_json)
   cat(sprintf("\nReview state and frozen ACP artifacts are saved in %s.\n", artifact_dir))
-  for (run in review$concept_provenance$search_runs %||% list()) cat(sprintf("- %s: returned %s; matched %s (%s); truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
+  runs <- review$concept_provenance$search_runs %||% list()
+  for (run in runs) cat(sprintf("- %s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
   zero <- identical(as.integer(review$candidate_count %||% 0L), 0L)
-  if (zero) cat("No candidates were returned, so CSV review is unavailable.\n") else cat(sprintf("Edit only review_* columns in %s; use x for deliberate selections, then save it. Preserve %s beside it.\n", csv, manifest))
-  action <- tolower(prompt(if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else "Review [csv=validate edited CSV now, later=resume later, json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: "))
+  exact_truncated <- Filter(function(run) isTRUE(run$truncated) && identical(run$matched_count_status %||% "", "exact") && !is.null(run$matched_count), runs)
+  max_exact <- if (length(exact_truncated)) max(vapply(exact_truncated, function(run) as.integer(run$matched_count), integer(1))) else 0L
+  expansion <- if (max_exact > 0L && max_exact <= 500L) "full=request complete available set" else if (max_exact > 500L) "max500=request largest ACP slice" else ""
+  if (zero) cat("No candidates were returned, so CSV review is unavailable.\n") else {
+    if (nzchar(expansion)) cat(sprintf("The current review is bounded. Use %s before downloading if you want more candidates.\n", expansion))
+    cat(sprintf("CSV review writes %s and %s. Edit only review_* columns; use x for deliberate selections.\n", csv, manifest))
+  }
+  action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
+  action <- tolower(prompt(action_prompt))
   if (is_back_signal(action)) return(action)
-  if (action %in% c("later", "source", "scope", "")) return(list(action = "retry"))
+  request_expansion <- (identical(action, "full") && max_exact > 0L && max_exact <= 500L) || (identical(action, "max500") && max_exact > 500L)
+  if (request_expansion) {
+    requested_limit <- if (identical(action, "full")) max_exact else 500L
+    request <- list(narrative_statement = narrative, confirmed_scope = TRUE, scope = scope,
+      concept_review_mode = "required", concept_build_mode = "search_only", review_delivery = "session",
+      candidate_limit = as.integer(requested_limit), concept_sets = list())
+    write_json(request, file.path(artifact_dir, "concept-review-expanded-request.json"))
+    expanded <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative,
+      confirmed_scope = TRUE, scope = scope, concept_review_mode = "required",
+      review_delivery = "session", candidate_limit = requested_limit)
+    write_json(expanded, file.path(artifact_dir, "concept-review-expanded-response.json"))
+    return(.studyAgentSlashPmcReviewHandoff(role_label, narrative, scope, expanded, client, artifact_dir,
+      imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = TRUE))
+  }
+  if (identical(action, "later")) { download_review(); return(list(action = "retry")) }
+  if (action %in% c("source", "scope", "")) return(list(action = "retry"))
   if (identical(action, "csv") && !zero) {
+    if (as.integer(review$candidate_count %||% 0L) > 500L && !identical(prompt("This CSV has more than 500 candidates; Atlas is recommended. Download anyway [type DOWNLOAD]: "), "DOWNLOAD")) return(list(action = "retry"))
+    download_review()
     chosen <- prompt(sprintf("Reviewed CSV path [%s]: ", csv)); if (is_back_signal(chosen)) return(chosen); if (!nzchar(chosen)) chosen <- csv
     converted <- .studyAgentSlashPmcReviewCsv(chosen, manifest, review$review_id %||% ""); sets <- converted$concept_sets; preview <- converted$approval_preview
   } else if (identical(action, "json")) {
@@ -111,7 +179,7 @@
   write_json(list(review_id = review$review_id %||% NULL, concept_sets = sets, approval_preview = preview), approval_path)
   cat(sprintf("Exact policy object saved to %s.\n", approval_path))
   if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
-  .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json)
+  .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation)
 }
 
 .studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
