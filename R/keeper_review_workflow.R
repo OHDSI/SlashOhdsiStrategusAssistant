@@ -134,6 +134,7 @@ runKeeperConceptSetWorkflow <- function(base_dir,
 #' @param stage_gate optional interactive stage gate callback returning actions or setting updates
 #' @param sample_size requested profile sample size per cohort
 #' @param review_row_limit maximum number of generated rows to review per cohort
+#' @param profile_concept_limit maximum approved concept items submitted per frozen Keeper lane for profile extraction
 #' @param use_descendants whether profile generation should include descendants
 #' @param remove_pii whether to enforce PII removal for generated rows
 #' @param reuse_rows when TRUE, reuse existing generated Keeper row artifacts
@@ -154,6 +155,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
                                         stage_gate = NULL,
                                         sample_size = 5,
                                         review_row_limit = 5,
+                                        profile_concept_limit = 5,
                                         use_descendants = TRUE,
                                         remove_pii = TRUE,
                                         reuse_rows = FALSE,
@@ -174,6 +176,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
   current_sample_size <- .studyAgentSlashValidateKeeperPositiveInteger(sample_size, "sample_size")
   current_review_row_limit <- .studyAgentSlashValidateKeeperPositiveInteger(review_row_limit, "review_row_limit")
+  current_profile_concept_limit <- .studyAgentSlashValidateKeeperPositiveInteger(profile_concept_limit, "profile_concept_limit")
   summary_rows <- vector("list", nrow(context$selected_map))
   workflow_errors <- list()
 
@@ -184,6 +187,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       role_phenotypes = role_phenotypes,
       sample_size = current_sample_size,
       review_row_limit = current_review_row_limit,
+      profile_concept_limit = current_profile_concept_limit,
       use_descendants = use_descendants,
       remove_pii = remove_pii,
       reuse_rows = reuse_rows,
@@ -215,6 +219,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     review_roles = as.list(context$review_roles),
     sample_size = as.integer(current_sample_size),
     review_row_limit = as.integer(current_review_row_limit),
+    profile_concept_limit = as.integer(current_profile_concept_limit),
     review_row_selection = if (is.null(review_row_selection)) NULL else as.character(review_row_selection),
     reuse_rows = isTRUE(reuse_rows),
     resume_reviews = isTRUE(resume_reviews),
@@ -324,6 +329,32 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
 .studyAgentSlashExtractConceptSets <- function(payload) {
   payload$concept_sets %||% payload$result$concept_sets %||% payload$full_result$concept_sets %||% list()
+}
+
+.studyAgentSlashBoundKeeperProfileConceptSets <- function(concept_sets, per_lane_limit) {
+  limit <- .studyAgentSlashValidateKeeperPositiveInteger(per_lane_limit, "profile_concept_limit")
+  if (!is.list(concept_sets) || !length(concept_sets)) {
+    return(list(concept_sets = list(), lane_counts = list(), approved_count = 0L, selected_count = 0L, per_lane_limit = limit))
+  }
+  lane_names <- vapply(concept_sets, function(item) {
+    lane <- trimws(as.character(item$conceptSetName %||% item$concept_set_name %||% ""))
+    if (nzchar(lane)) lane else "unlabeled"
+  }, character(1))
+  selected_indices <- integer(0)
+  lane_counts <- list()
+  for (lane in unique(lane_names)) {
+    indices <- which(lane_names == lane)
+    chosen <- indices[seq_len(min(length(indices), limit))]
+    selected_indices <- c(selected_indices, chosen)
+    lane_counts[[lane]] <- list(approved_count = length(indices), selected_count = length(chosen))
+  }
+  list(
+    concept_sets = concept_sets[selected_indices],
+    lane_counts = lane_counts,
+    approved_count = length(concept_sets),
+    selected_count = length(selected_indices),
+    per_lane_limit = limit
+  )
 }
 
 .studyAgentSlashExtractRows <- function(payload) {
@@ -919,6 +950,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
                                                  role_phenotypes,
                                                  sample_size,
                                                  review_row_limit,
+                                                 profile_concept_limit,
                                                  use_descendants,
                                                  remove_pii,
                                                  reuse_rows,
@@ -933,6 +965,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   generated_path <- file.path(context$generated_dir, sprintf("%s_concept_sets.json", prefix))
   approved_path <- file.path(context$approved_dir, sprintf("%s_concept_sets.json", prefix))
   rows_path <- file.path(context$rows_dir, sprintf("%s_rows.json", prefix))
+  profile_input_path <- file.path(context$rows_dir, sprintf("%s_profile_input.json", prefix))
   rows_csv_path <- file.path(context$rows_dir, sprintf("%s_rows.csv", prefix))
   review_path <- file.path(context$reviews_dir, sprintf("%s_reviews.json", prefix))
   review_csv_path <- file.path(context$reviews_dir, sprintf("%s_reviews.csv", prefix))
@@ -942,9 +975,38 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   }
   approved_payload <- .studyAgentSlashReadJson(approved_path, simplify = FALSE)
   approved_concept_sets <- .studyAgentSlashExtractConceptSets(approved_payload)
+  profile_selection <- .studyAgentSlashBoundKeeperProfileConceptSets(
+    approved_concept_sets,
+    profile_concept_limit
+  )
+  profile_concept_sets <- profile_selection$concept_sets
+  .studyAgentSlashWriteJson(
+    c(
+      list(
+        status = "profile_input",
+        role = role,
+        cohort_definition_id = cohort_id,
+        approved_concept_sets_path = approved_path,
+        profile_concept_limit_per_lane = profile_selection$per_lane_limit,
+        approved_concept_set_count = profile_selection$approved_count,
+        selected_concept_set_count = profile_selection$selected_count,
+        lane_counts = profile_selection$lane_counts
+      ),
+      list(concept_sets = profile_concept_sets)
+    ),
+    profile_input_path
+  )
+  message(sprintf(
+    "Keeper profile input for %s: using %s of %s approved concept item(s), capped at %s per lane. Details: %s",
+    cohort_name,
+    profile_selection$selected_count,
+    profile_selection$approved_count,
+    profile_selection$per_lane_limit,
+    profile_input_path
+  ))
 
   rows_source <- "generated"
-  rows_payload <- if (length(approved_concept_sets)) {
+  rows_payload <- if (length(profile_concept_sets)) {
     if (isTRUE(reuse_rows) && file.exists(rows_path)) {
       rows_source <- "reused"
       .studyAgentSlashReadJson(rows_path, simplify = FALSE)
@@ -956,7 +1018,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
           cohort_table = context$exec$cohortTable,
           cohort_definition_id = cohort_id,
           cdm_database_schema = context$exec$cdmDatabaseSchema,
-          keeper_concept_sets = approved_concept_sets,
+          keeper_concept_sets = profile_concept_sets,
           sample_size = sample_size,
           phenotype_name = phenotype_name,
           use_descendants = use_descendants,
@@ -967,8 +1029,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       payload
     }
   } else {
-    rows_source <- "missing_approved_concept_sets"
-    list(status = "error", error = "no approved concept sets", rows = list())
+    rows_source <- "missing_profile_concept_sets"
+    list(status = "error", error = "no approved concept sets selected for profile extraction", rows = list())
   }
   rows_error <- .studyAgentSlashPayloadErrorMessage(rows_payload)
   workflow_errors <- .studyAgentSlashAppendWorkflowError(
@@ -1199,8 +1261,10 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       generated_concept_sets_path = generated_path,
       approved_concept_sets_path = approved_path,
       rows_path = rows_path,
-      reviews_path = review_path,
+      profile_input_path = profile_input_path,
       approved_concept_set_count = length(approved_concept_sets),
+      profile_concept_set_count = profile_selection$selected_count,
+      profile_concept_limit_per_lane = profile_selection$per_lane_limit,
       row_count = length(row_records),
       reviewed_row_count = length(review_records),
       review_row_limit = as.integer(current_review_row_limit),

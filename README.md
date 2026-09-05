@@ -17,7 +17,7 @@ StudyAgent](https://github.com/OHDSI/StudyAgent) project.
 - Workflow-local cohort JSON artifacts, so generated Strategus scripts do not depend
   on the original cohort provider at execution time.
 - Review-gated narrative phenotype creation retains durable CSV/manifest review state, supports complete review sessions through 500 candidates, records ACP/local technical-validation environment comparisons, and can save a print-friendly Circe definition.
-- Keeper concept-set preparation is separate from row-level Keeper case review; the latter is deferred until generated cohort rows are available, and empty profile samples report a non-secret MCP target fingerprint plus the queried cohort source for database troubleshooting.
+- Keeper concept-set preparation is separate from row-level Keeper case review; the latter is deferred until generated cohort rows are available. Full generated artifacts are retained, while profile extraction sends a bounded per-lane subset recorded in a durable profile-input artifact. Empty samples report a non-secret MCP target fingerprint plus the queried cohort source for database troubleshooting.
 - Optional StudyAgent ACP assistance for phenotype recommendations, conversion to validated [CapR](https://github.com/OHDSI/Capr) and Circe JSON of non-computable phenotypes indexed by the ACP or narrative phenotype descriptions, and [Keeper](https://github.com/OHDSI/Keeper) phenotype definition validation workflows.
 - Strategus database/execution-settings helpers and a read-only Shiny artifact browser.
 - Runtime compatibility checks against the tested HADES profile.
