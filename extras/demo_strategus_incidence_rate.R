@@ -32,14 +32,15 @@ slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
 )
 
 # Resume a prior run:
-# slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-#   outputDir = output_dir,
-#   acpUrl = acp_url,
-#   aiSupport = "enabled",
-#   resume = TRUE,
-#   allowCache = TRUE,
-#   promptOnCache = TRUE,
-#   bannerPath = banner_path,
-#   showBanner = TRUE,
-#   executionTableDisplay = "console"
-# )
+## slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
+##   outputDir = output_dir,
+##   acpUrl = acp_url,
+##   aiSupport = "enabled",
+##   resume = TRUE,
+##   allowCache = TRUE,
+##   promptOnCache = TRUE,
+##   bannerPath = banner_path,
+##   showBanner = TRUE,
+##   executionTableDisplay = "console"
+## )
+

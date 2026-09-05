@@ -296,7 +296,17 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   payload$intent_split %||% payload
 }
 
-.studyAgentSlashInferPhenotypeName <- function(role, cohort_id, cohort_name, intent_payload, overrides = NULL) {
+.studyAgentSlashIsGenericCohortLabel <- function(value) {
+  value <- trimws(as.character(value %||% ""))
+  !nzchar(value) || grepl("^Cohort[[:space:]]+[0-9]+$", value, ignore.case = TRUE)
+}
+
+.studyAgentSlashInferPhenotypeName <- function(role,
+                                                cohort_id,
+                                                cohort_name,
+                                                intent_payload,
+                                                study_state = list(),
+                                                overrides = NULL) {
   override <- NULL
   if (is.list(overrides) && !is.null(overrides[[as.character(cohort_id)]])) {
     override <- overrides[[as.character(cohort_id)]]
@@ -321,10 +331,24 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   if (!is.null(field) && !is.null(intent_payload[[field]]) && nzchar(trimws(as.character(intent_payload[[field]])))) {
     return(trimws(as.character(intent_payload[[field]])))
   }
-  if (!is.null(cohort_name) && nzchar(trimws(as.character(cohort_name)))) {
+  state_candidates <- if (!is.null(field)) list(
+    study_state[[field]],
+    study_state$study_context[[field]],
+    study_state$dialogue_context[[field]]
+  ) else list()
+  for (candidate in state_candidates) {
+    if (!is.null(candidate) && nzchar(trimws(as.character(candidate)))) {
+      return(trimws(as.character(candidate)))
+    }
+  }
+  if (!.studyAgentSlashIsGenericCohortLabel(cohort_name)) {
     return(trimws(as.character(cohort_name)))
   }
-  sprintf("Cohort %s", cohort_id)
+  stop(
+    sprintf("A clinical phenotype label is required for Keeper %s review of cohort %s. ", role, cohort_id),
+    "No non-generic label was found in role_phenotypes, intent metadata, or outputs/study_agent_state.json. ",
+    sprintf("Provide role_phenotypes[['%s']] or restore the saved %s.", role, field %||% "study statement")
+  )
 }
 
 .studyAgentSlashExtractConceptSets <- function(payload) {
@@ -367,6 +391,29 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
 .studyAgentSlashExtractReviews <- function(payload) {
   payload$reviews %||% payload$result$reviews %||% payload$full_result$reviews %||% list()
+}
+
+.studyAgentSlashReviewUsesGenericPhenotypeLabel <- function(payload) {
+  labels <- c(as.character(payload$phenotype_name %||% ""), vapply(
+    .studyAgentSlashExtractReviews(payload),
+    function(review) as.character(review$phenotype_name %||% ""),
+    character(1)
+  ))
+  any(vapply(labels, .studyAgentSlashIsGenericCohortLabel, logical(1)))
+}
+
+.studyAgentSlashArchiveStaleKeeperReview <- function(review_path) {
+  archive_dir <- file.path(dirname(review_path), "stale")
+  .studyAgentSlashEnsureDir(archive_dir)
+  timestamp <- format(Sys.time(), "%Y%m%dT%H%M%S")
+  archive_path <- file.path(
+    archive_dir,
+    paste0(tools::file_path_sans_ext(basename(review_path)), "_generic-label_", timestamp, ".json")
+  )
+  if (!file.copy(review_path, archive_path, overwrite = FALSE)) {
+    stop("Unable to archive stale Keeper review before regeneration: ", review_path)
+  }
+  archive_path
 }
 
 .studyAgentSlashParseRowSelection <- function(selection, total_rows, default_limit) {
@@ -673,6 +720,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   }
 
   output_dir <- file.path(base_dir, "outputs")
+  study_state_path <- file.path(output_dir, "study_agent_state.json")
+  study_state <- if (file.exists(study_state_path)) .studyAgentSlashReadJson(study_state_path, simplify = FALSE) else list()
   keeper_dir <- file.path(base_dir, "keeper-case-review")
   generated_dir <- file.path(keeper_dir, "concept-sets-generated")
   approved_dir <- file.path(keeper_dir, "concept-sets-approved")
@@ -712,6 +761,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     reviews_dir = reviews_dir,
     exec = exec,
     intent_payload = intent_payload,
+    study_state_path = if (file.exists(study_state_path)) study_state_path else NULL,
+    study_state = study_state,
     selected_map = selected_map,
     review_roles = review_roles,
     stage_callback = stage_callback,
@@ -734,7 +785,14 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   role <- as.character(selected_row$role[[1]] %||% "")
   cohort_id <- suppressWarnings(as.integer(selected_row$cohort_id[[1]]))
   cohort_name <- as.character(selected_row$cohort_name[[1]] %||% sprintf("Cohort %s", cohort_id))
-  phenotype_name <- .studyAgentSlashInferPhenotypeName(role, cohort_id, cohort_name, context$intent_payload, role_phenotypes)
+  phenotype_name <- .studyAgentSlashInferPhenotypeName(
+    role = role,
+    cohort_id = cohort_id,
+    cohort_name = cohort_name,
+    intent_payload = context$intent_payload,
+    study_state = context$study_state,
+    overrides = role_phenotypes
+  )
   prefix <- sprintf("%s_%s", role, cohort_id)
   generated_path <- file.path(context$generated_dir, sprintf("%s_concept_sets.json", prefix))
   approved_path <- file.path(context$approved_dir, sprintf("%s_concept_sets.json", prefix))
@@ -960,7 +1018,14 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   role <- as.character(selected_row$role[[1]] %||% "")
   cohort_id <- suppressWarnings(as.integer(selected_row$cohort_id[[1]]))
   cohort_name <- as.character(selected_row$cohort_name[[1]] %||% sprintf("Cohort %s", cohort_id))
-  phenotype_name <- .studyAgentSlashInferPhenotypeName(role, cohort_id, cohort_name, context$intent_payload, role_phenotypes)
+  phenotype_name <- .studyAgentSlashInferPhenotypeName(
+    role = role,
+    cohort_id = cohort_id,
+    cohort_name = cohort_name,
+    intent_payload = context$intent_payload,
+    study_state = context$study_state,
+    overrides = role_phenotypes
+  )
   prefix <- sprintf("%s_%s", role, cohort_id)
   generated_path <- file.path(context$generated_dir, sprintf("%s_concept_sets.json", prefix))
   approved_path <- file.path(context$approved_dir, sprintf("%s_concept_sets.json", prefix))
@@ -1119,10 +1184,21 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
   review_source <- "generated"
   review_records <- list()
+  stale_review_archive_path <- NULL
   if (isTRUE(current_resume_reviews) && file.exists(review_path)) {
     existing_review_payload <- .studyAgentSlashReadJson(review_path, simplify = FALSE)
-    review_records <- .studyAgentSlashExtractReviews(existing_review_payload)
-    if (length(review_records) > 0) review_source <- "resumed"
+    if (.studyAgentSlashReviewUsesGenericPhenotypeLabel(existing_review_payload)) {
+      stale_review_archive_path <- .studyAgentSlashArchiveStaleKeeperReview(review_path)
+      review_source <- "stale_generic_label_archived"
+      message(sprintf(
+        "Archived stale Keeper review with a generic phenotype label to %s. Regenerating reviews for '%s'.",
+        stale_review_archive_path,
+        phenotype_name
+      ))
+    } else {
+      review_records <- .studyAgentSlashExtractReviews(existing_review_payload)
+      if (length(review_records) > 0) review_source <- "resumed"
+    }
   }
   selected_row_indices <- .studyAgentSlashParseRowSelection(current_review_row_selection, length(row_records), current_review_row_limit)
   if (length(selected_row_indices) > 0) {
@@ -1226,6 +1302,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     reviewed_row_count = length(review_records),
     review_row_limit = as.integer(current_review_row_limit),
     review_row_selection = if (is.null(current_review_row_selection)) NULL else as.character(current_review_row_selection),
+    supersedes_stale_review_path = stale_review_archive_path,
     reviews = review_records
   )
   .studyAgentSlashWriteJson(review_payload_out, review_path)
@@ -1273,6 +1350,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       selected_row_indices = as.list(selected_row_indices),
       rows_source = rows_source,
       reviews_source = review_source,
+      supersedes_stale_review_path = stale_review_archive_path,
       row_generation_status = rows_payload$status %||% "ok",
       sample_size_returned = sample_size_returned,
       profile_record_count = profile_record_count,
