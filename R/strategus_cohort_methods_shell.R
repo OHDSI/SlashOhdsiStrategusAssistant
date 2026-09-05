@@ -7066,10 +7066,12 @@ Keeper domain complete: %s / %s
             if (!nzchar(entered)) return(list(action = "continue"))
             if (entered %in% c("r", "rerun")) return(list(action = "rerun_domain"))
             if (entered %in% c("i", "inspect")) {
-              cat(sprintf("Inspect or edit: %s
+              cat(sprintf("Inspect generated candidate artifact: %s
 ", context$generated_concept_sets_path %||% "<missing>"))
-              readline_with_dialogue("Press Enter when you are ready to keep these domain results: ")
-              return(list(action = "continue"))
+              cat(sprintf("This domain generated %s candidate concept set(s). Inspection does not approve or finalize them.
+", context$generated_concept_set_count %||% 0L))
+              readline_with_dialogue("Inspection complete [Enter=return to domain options]: ")
+              next
             }
             cat("Choose Enter, r, or i.
 ")

@@ -599,8 +599,11 @@
   write_json(scope, file.path(artifact_dir, "confirmed-scope.json"))
   cat(sprintf("Confirmed scope draft written to %s.\n", file.path(artifact_dir, "confirmed-scope.json")))
   .studyAgentSlashPmcPrintScope(scope)
-  approved_scope <- prompt("I confirm every displayed scope value is deliberate [type CONFIRM]: ")
-  if (!identical(approved_scope, "CONFIRM")) return(list(action = "retry"))
+  approved_scope <- prompt("Confirm scope [type CONFIRM; Enter or /back returns to cohort-source selection]: ")
+  if (!identical(approved_scope, "CONFIRM")) {
+    cat("Scope was not confirmed; returning to cohort-source selection.\n")
+    return(list(action = "retry"))
+  }
   write_json(list(narrative_statement = narrative, confirmed_scope = TRUE,
     concept_review_mode = "required", concept_build_mode = "search_only", review_delivery = "session",
     candidate_limit = 20L, concept_sets = list(), scope = scope),

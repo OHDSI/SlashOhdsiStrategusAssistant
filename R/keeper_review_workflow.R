@@ -984,8 +984,20 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   row_records <- .studyAgentSlashExtractRows(rows_payload)
   sample_size_returned <- suppressWarnings(as.integer(rows_payload$sample_size_returned %||% rows_payload$result$sample_size_returned %||% rows_payload$full_result$sample_size_returned %||% length(row_records)))
   if (is.na(sample_size_returned)) sample_size_returned <- length(row_records)
-  profile_record_count <- suppressWarnings(as.integer(rows_payload$diagnostics$record_count %||% rows_payload$result$diagnostics$record_count %||% rows_payload$full_result$diagnostics$record_count %||% 0L))
+  profile_diagnostics <- rows_payload$diagnostics %||% rows_payload$result$diagnostics %||% rows_payload$full_result$diagnostics %||% list()
+  profile_record_count <- suppressWarnings(as.integer(profile_diagnostics$record_count %||% 0L))
   if (is.na(profile_record_count)) profile_record_count <- 0L
+  connection_identity <- profile_diagnostics$connection_identity %||% list()
+  cohort_source <- profile_diagnostics$cohort_source %||% list()
+  target_hash <- as.character(connection_identity$target_hash %||% "")
+  source_schema <- as.character(cohort_source$schema %||% context$exec$workDatabaseSchema %||% "")
+  source_table <- as.character(cohort_source$table %||% context$exec$cohortTable %||% "")
+  source_id <- as.character(cohort_source$cohort_definition_id %||% cohort_id)
+  profile_target_note <- if (nzchar(target_hash)) {
+    sprintf(" MCP target fingerprint %s; queried %s.%s for cohort_definition_id %s.", target_hash, source_schema, source_table, source_id)
+  } else {
+    sprintf(" MCP queried %s.%s for cohort_definition_id %s (target fingerprint was not returned).", source_schema, source_table, source_id)
+  }
   if (identical(rows_payload$status %||% "ok", "ok") && sample_size_returned <= 0L) {
     workflow_errors <- .studyAgentSlashAppendWorkflowError(
       workflow_errors,
@@ -994,7 +1006,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       cohort_id = cohort_id,
       cohort_name = cohort_name,
       phenotype_name = phenotype_name,
-      message = "Keeper profile generation returned zero sampled cohort rows. Confirm the MCP DB connection string points to the same database the R workflow used when generating cohorts, then verify the configured cohort table contains rows for this cohort_definition_id.",
+      message = paste0("Keeper profile generation returned zero sampled cohort rows. Compare the MCP target fingerprint and queried cohort source below with the R execution database, then verify that table contains this cohort_definition_id.", profile_target_note),
       path = rows_path
     )
   } else if (identical(rows_payload$status %||% "ok", "ok") && length(row_records) <= 0L) {

@@ -113,16 +113,17 @@
   capr <- emitted$capr %||% list(); writeLines(as.character(capr$source %||% ""), file.path(artifact_dir, "phenotype_definition.R"))
   circe <- emitted$circe_json %||% emitted$circeJson; cohort <- if (is.character(circe)) jsonlite::fromJSON(circe, simplifyVector = FALSE) else circe
   .studyAgentSlashValidateCohortDefinitionJson(cohort, "phenotype_make_computable result")
-  readable <- tryCatch(capture.output(CirceR::cohortPrintFriendly(cohort)), error = function(error) error)
+  readable <- tryCatch(CirceR::cohortPrintFriendly(cohort), error = function(error) error)
   if (inherits(readable, "error")) cat(sprintf("Could not render a print-friendly Circe definition: %s\n", conditionMessage(readable))) else {
+    readable <- gsub("\r\n?", "\n", paste(as.character(readable), collapse = ""), perl = TRUE)
     readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
-    if (identical(readable_action, "v")) cat(paste(readable, collapse = "\n"), "\n")
-    if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
+    if (identical(readable_action, "v")) cat(readable, "\n", sep = "")
+    if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path, useBytes = TRUE); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
   }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
     justification = "Created through the review-gated phenotype_make_computable ACP flow.", circe_json = cohort), imported_definition_dir)
-  imported$metadata$source_type <- "phenotype_make_computable"; imported$metadata$artifact_dir <- artifact_dir; imported$metadata$validation <- validation; imported$metadata$validation_environment_comparison <- comparison
+  imported$metadata$source_type <- "phenotype_make_computable"; imported$metadata$source_label <- "ACP phenotype_make_computable"; imported$metadata$artifact_dir <- artifact_dir; imported$metadata$validation <- validation; imported$metadata$validation_environment_comparison <- comparison
   list(action = "handled", imported = list(imported), selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata))
 }
 
