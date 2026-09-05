@@ -7066,10 +7066,12 @@ Keeper domain complete: %s / %s
             if (!nzchar(entered)) return(list(action = "continue"))
             if (entered %in% c("r", "rerun")) return(list(action = "rerun_domain"))
             if (entered %in% c("i", "inspect")) {
-              cat(sprintf("Inspect or edit: %s
+              cat(sprintf("Inspect generated candidate artifact: %s
 ", context$generated_concept_sets_path %||% "<missing>"))
-              readline_with_dialogue("Press Enter when you are ready to keep these domain results: ")
-              return(list(action = "continue"))
+              cat(sprintf("This domain generated %s candidate concept set(s). Inspection does not approve or finalize them.
+", context$generated_concept_set_count %||% 0L))
+              readline_with_dialogue("Inspection complete [Enter=return to domain options]: ")
+              next
             }
             cat("Choose Enter, r, or i.
 ")
@@ -7165,7 +7167,8 @@ Keeper review saved: %s reviewed row(s)
         keeper_concept_set_ran <- TRUE
         cat(sprintf("Keeper concept-set state saved to: %s
 ", keeper_concept_set_state_path))
-        proceed_case_review <- prompt_yesno_strict("Proceed to Keeper case review now?", default = TRUE)
+        cat("Keeper concept sets are prepared. Case review is deferred until cohort generation has completed and cohort rows are available. Run script 03_generate_cohorts.R, then script 05_keeper_case_review.R to resume.\n")
+        proceed_case_review <- FALSE
         if (isTRUE(proceed_case_review)) {
           keeper_case_review_result <- tryCatch(
             runKeeperCaseReviewWorkflow(
@@ -7231,7 +7234,7 @@ Keeper review saved: %s reviewed row(s)
   state$keeper_concept_set_ran <- isTRUE(keeper_concept_set_ran)
   state$keeper_case_review_ran <- isTRUE(keeper_case_review_ran)
   state$keeper_concept_set_status <- if (inherits(keeper_concept_set_result, "error")) "error" else as.character(keeper_concept_set_result$status %||% if (isTRUE(keeper_concept_set_ran)) "ok" else "not_run")
-  state$keeper_case_review_status <- if (inherits(keeper_case_review_result, "error")) "error" else as.character(keeper_case_review_result$status %||% if (isTRUE(keeper_case_review_ran)) "ok" else "not_run")
+  state$keeper_case_review_status <- if (isTRUE(keeper_concept_set_ran) && is.null(keeper_case_review_result)) "deferred_pending_cohort_generation" else if (inherits(keeper_case_review_result, "error")) "error" else as.character(keeper_case_review_result$status %||% if (isTRUE(keeper_case_review_ran)) "ok" else "not_run")
   state$keeper_concept_set_error_count <- if (inherits(keeper_concept_set_result, "error")) 1L else as.integer(keeper_concept_set_result$error_count %||% 0L)
   state$keeper_case_review_error_count <- if (inherits(keeper_case_review_result, "error")) 1L else as.integer(keeper_case_review_result$error_count %||% 0L)
   write_json(state, state_path)
@@ -7529,6 +7532,7 @@ Keeper review saved: %s reviewed row(s)
     "review_roles <- c('outcome')",
     "sample_size <- 5",
     "review_row_limit <- 5",
+    "profile_concept_limit <- 5  # maximum approved Keeper items per lane sent to profile extraction",
     "acp_timeout_seconds <- as.numeric(Sys.getenv('ACP_TIMEOUT', '300'))",
     "Sys.setenv(ACP_TIMEOUT = as.character(acp_timeout_seconds))",
     "reuse_rows <- FALSE",
@@ -7547,6 +7551,7 @@ Keeper review saved: %s reviewed row(s)
     "  review_roles = review_roles,",
     "  sample_size = sample_size,",
     "  review_row_limit = review_row_limit,",
+    "  profile_concept_limit = profile_concept_limit,",
     "  reuse_rows = reuse_rows,",
     "  resume_reviews = resume_reviews,",
     "  review_row_selection = review_row_selection,",

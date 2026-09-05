@@ -14,7 +14,7 @@ library(slashOhdsiAcpClient)
 
 acp_url <- Sys.getenv("ACP_URL", "http://127.0.0.1:8765")
 Sys.setenv(ACP_TIMEOUT = "1800", ACP_URL = acp_url)
-invisible(connect_study_agent_acp())
+invisible(slashOhdsiAcpClient::acp_connect(url = acp_url))
 
 output_dir <- file.path(demo_root, "demo-strategus-cohort-method")
 incidence_output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")

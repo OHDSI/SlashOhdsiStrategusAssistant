@@ -120,3 +120,32 @@ test_that("create acquisition dispatch preserves a handled reviewed result", {
   )
   expect_identical(result$selected_source_ids, "acp:99")
 })
+
+test_that("reviewed concept CSV becomes an explicit policy object", {
+  review_dir <- tempfile("pmc-review-")
+  dir.create(review_dir)
+  csv_path <- file.path(review_dir, "concept-review.csv")
+  manifest_path <- file.path(review_dir, "concept-review-manifest.json")
+  columns <- c("concept_set_name", "concept_id", "concept_name", "domain", "standard_concept", "standard_concept_status", "assessment_status", "precision_eligible", "relationship_evidence", "review_include_concept", "review_include_descendants", "review_include_mapped", "review_exclude_concepts", "review_exclude_descendants", "review_exclude_mapped")
+  row <- as.list(setNames(rep("", length(columns)), columns))
+  row$concept_set_name <- "Warfarin"; row$concept_id <- "1310149"; row$concept_name <- "warfarin"; row$domain <- "Drug"; row$standard_concept <- "S"; row$standard_concept_status <- "Standard"; row$review_include_concept <- "x"; row$review_include_descendants <- "x"
+  utils::write.csv(as.data.frame(row, check.names = FALSE), csv_path, row.names = FALSE, na = "")
+  jsonlite::write_json(list(review_id = "review-1"), manifest_path, auto_unbox = TRUE)
+  result <- slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(csv_path, manifest_path, "review-1")
+  expect_equal(result$concept_sets[[1]]$name, "Warfarin")
+  expect_true(result$concept_sets[[1]]$items[[1]]$include_descendants)
+  expect_false(result$concept_sets[[1]]$items[[1]]$is_excluded)
+})
+
+test_that("reviewed concept CSV rejects policy marks without a root decision", {
+  review_dir <- tempfile("pmc-review-invalid-")
+  dir.create(review_dir)
+  csv_path <- file.path(review_dir, "concept-review.csv")
+  manifest_path <- file.path(review_dir, "concept-review-manifest.json")
+  columns <- c("concept_set_name", "concept_id", "concept_name", "domain", "standard_concept", "standard_concept_status", "assessment_status", "precision_eligible", "relationship_evidence", "review_include_concept", "review_include_descendants", "review_include_mapped", "review_exclude_concepts", "review_exclude_descendants", "review_exclude_mapped")
+  row <- as.list(setNames(rep("", length(columns)), columns))
+  row$concept_set_name <- "Warfarin"; row$concept_id <- "1310149"; row$concept_name <- "warfarin"; row$domain <- "Drug"; row$review_include_descendants <- "x"
+  utils::write.csv(as.data.frame(row, check.names = FALSE), csv_path, row.names = FALSE, na = "")
+  jsonlite::write_json(list(review_id = "review-2"), manifest_path, auto_unbox = TRUE)
+  expect_error(slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(csv_path, manifest_path, "review-2"), "without review_include_concept")
+})

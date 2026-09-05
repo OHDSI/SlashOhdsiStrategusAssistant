@@ -1,0 +1,23 @@
+{
+  "index_event": "Ketamine",
+  "criterion_domains": {
+    "Ketamine": "Drug",
+    "Treatment-resistant depression": "Condition"
+  },
+  "criterion_vocabularies": {
+    "Ketamine": ["RxNorm"]
+  },
+  "entry_limit": "First",
+  "prior_observation": 365,
+  "index_day_boundary": "included",
+  "windows": "none",
+  "supporting_condition_occurrence": {
+    "concept_set": "Treatment-resistant depression",
+    "start_days": -180,
+    "end_days": 0,
+    "anchor": "index_start"
+  },
+  "multi_domain_entry_policy": "supporting_evidence_only",
+  "exit_strategy": "observation",
+  "visit_overlap": false
+}

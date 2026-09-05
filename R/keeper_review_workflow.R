@@ -134,6 +134,7 @@ runKeeperConceptSetWorkflow <- function(base_dir,
 #' @param stage_gate optional interactive stage gate callback returning actions or setting updates
 #' @param sample_size requested profile sample size per cohort
 #' @param review_row_limit maximum number of generated rows to review per cohort
+#' @param profile_concept_limit maximum approved concept items submitted per frozen Keeper lane for profile extraction
 #' @param use_descendants whether profile generation should include descendants
 #' @param remove_pii whether to enforce PII removal for generated rows
 #' @param reuse_rows when TRUE, reuse existing generated Keeper row artifacts
@@ -154,6 +155,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
                                         stage_gate = NULL,
                                         sample_size = 5,
                                         review_row_limit = 5,
+                                        profile_concept_limit = 5,
                                         use_descendants = TRUE,
                                         remove_pii = TRUE,
                                         reuse_rows = FALSE,
@@ -174,6 +176,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
   current_sample_size <- .studyAgentSlashValidateKeeperPositiveInteger(sample_size, "sample_size")
   current_review_row_limit <- .studyAgentSlashValidateKeeperPositiveInteger(review_row_limit, "review_row_limit")
+  current_profile_concept_limit <- .studyAgentSlashValidateKeeperPositiveInteger(profile_concept_limit, "profile_concept_limit")
   summary_rows <- vector("list", nrow(context$selected_map))
   workflow_errors <- list()
 
@@ -184,6 +187,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       role_phenotypes = role_phenotypes,
       sample_size = current_sample_size,
       review_row_limit = current_review_row_limit,
+      profile_concept_limit = current_profile_concept_limit,
       use_descendants = use_descendants,
       remove_pii = remove_pii,
       reuse_rows = reuse_rows,
@@ -215,6 +219,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     review_roles = as.list(context$review_roles),
     sample_size = as.integer(current_sample_size),
     review_row_limit = as.integer(current_review_row_limit),
+    profile_concept_limit = as.integer(current_profile_concept_limit),
     review_row_selection = if (is.null(review_row_selection)) NULL else as.character(review_row_selection),
     reuse_rows = isTRUE(reuse_rows),
     resume_reviews = isTRUE(resume_reviews),
@@ -291,7 +296,17 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   payload$intent_split %||% payload
 }
 
-.studyAgentSlashInferPhenotypeName <- function(role, cohort_id, cohort_name, intent_payload, overrides = NULL) {
+.studyAgentSlashIsGenericCohortLabel <- function(value) {
+  value <- trimws(as.character(value %||% ""))
+  !nzchar(value) || grepl("^Cohort[[:space:]]+[0-9]+$", value, ignore.case = TRUE)
+}
+
+.studyAgentSlashInferPhenotypeName <- function(role,
+                                                cohort_id,
+                                                cohort_name,
+                                                intent_payload,
+                                                study_state = list(),
+                                                overrides = NULL) {
   override <- NULL
   if (is.list(overrides) && !is.null(overrides[[as.character(cohort_id)]])) {
     override <- overrides[[as.character(cohort_id)]]
@@ -316,14 +331,54 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   if (!is.null(field) && !is.null(intent_payload[[field]]) && nzchar(trimws(as.character(intent_payload[[field]])))) {
     return(trimws(as.character(intent_payload[[field]])))
   }
-  if (!is.null(cohort_name) && nzchar(trimws(as.character(cohort_name)))) {
+  state_candidates <- if (!is.null(field)) list(
+    study_state[[field]],
+    study_state$study_context[[field]],
+    study_state$dialogue_context[[field]]
+  ) else list()
+  for (candidate in state_candidates) {
+    if (!is.null(candidate) && nzchar(trimws(as.character(candidate)))) {
+      return(trimws(as.character(candidate)))
+    }
+  }
+  if (!.studyAgentSlashIsGenericCohortLabel(cohort_name)) {
     return(trimws(as.character(cohort_name)))
   }
-  sprintf("Cohort %s", cohort_id)
+  stop(
+    sprintf("A clinical phenotype label is required for Keeper %s review of cohort %s. ", role, cohort_id),
+    "No non-generic label was found in role_phenotypes, intent metadata, or outputs/study_agent_state.json. ",
+    sprintf("Provide role_phenotypes[['%s']] or restore the saved %s.", role, field %||% "study statement")
+  )
 }
 
 .studyAgentSlashExtractConceptSets <- function(payload) {
   payload$concept_sets %||% payload$result$concept_sets %||% payload$full_result$concept_sets %||% list()
+}
+
+.studyAgentSlashBoundKeeperProfileConceptSets <- function(concept_sets, per_lane_limit) {
+  limit <- .studyAgentSlashValidateKeeperPositiveInteger(per_lane_limit, "profile_concept_limit")
+  if (!is.list(concept_sets) || !length(concept_sets)) {
+    return(list(concept_sets = list(), lane_counts = list(), approved_count = 0L, selected_count = 0L, per_lane_limit = limit))
+  }
+  lane_names <- vapply(concept_sets, function(item) {
+    lane <- trimws(as.character(item$conceptSetName %||% item$concept_set_name %||% ""))
+    if (nzchar(lane)) lane else "unlabeled"
+  }, character(1))
+  selected_indices <- integer(0)
+  lane_counts <- list()
+  for (lane in unique(lane_names)) {
+    indices <- which(lane_names == lane)
+    chosen <- indices[seq_len(min(length(indices), limit))]
+    selected_indices <- c(selected_indices, chosen)
+    lane_counts[[lane]] <- list(approved_count = length(indices), selected_count = length(chosen))
+  }
+  list(
+    concept_sets = concept_sets[selected_indices],
+    lane_counts = lane_counts,
+    approved_count = length(concept_sets),
+    selected_count = length(selected_indices),
+    per_lane_limit = limit
+  )
 }
 
 .studyAgentSlashExtractRows <- function(payload) {
@@ -336,6 +391,29 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
 .studyAgentSlashExtractReviews <- function(payload) {
   payload$reviews %||% payload$result$reviews %||% payload$full_result$reviews %||% list()
+}
+
+.studyAgentSlashReviewUsesGenericPhenotypeLabel <- function(payload) {
+  labels <- c(as.character(payload$phenotype_name %||% ""), vapply(
+    .studyAgentSlashExtractReviews(payload),
+    function(review) as.character(review$phenotype_name %||% ""),
+    character(1)
+  ))
+  any(vapply(labels, .studyAgentSlashIsGenericCohortLabel, logical(1)))
+}
+
+.studyAgentSlashArchiveStaleKeeperReview <- function(review_path) {
+  archive_dir <- file.path(dirname(review_path), "stale")
+  .studyAgentSlashEnsureDir(archive_dir)
+  timestamp <- format(Sys.time(), "%Y%m%dT%H%M%S")
+  archive_path <- file.path(
+    archive_dir,
+    paste0(tools::file_path_sans_ext(basename(review_path)), "_generic-label_", timestamp, ".json")
+  )
+  if (!file.copy(review_path, archive_path, overwrite = FALSE)) {
+    stop("Unable to archive stale Keeper review before regeneration: ", review_path)
+  }
+  archive_path
 }
 
 .studyAgentSlashParseRowSelection <- function(selection, total_rows, default_limit) {
@@ -642,6 +720,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   }
 
   output_dir <- file.path(base_dir, "outputs")
+  study_state_path <- file.path(output_dir, "study_agent_state.json")
+  study_state <- if (file.exists(study_state_path)) .studyAgentSlashReadJson(study_state_path, simplify = FALSE) else list()
   keeper_dir <- file.path(base_dir, "keeper-case-review")
   generated_dir <- file.path(keeper_dir, "concept-sets-generated")
   approved_dir <- file.path(keeper_dir, "concept-sets-approved")
@@ -681,6 +761,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     reviews_dir = reviews_dir,
     exec = exec,
     intent_payload = intent_payload,
+    study_state_path = if (file.exists(study_state_path)) study_state_path else NULL,
+    study_state = study_state,
     selected_map = selected_map,
     review_roles = review_roles,
     stage_callback = stage_callback,
@@ -703,7 +785,14 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   role <- as.character(selected_row$role[[1]] %||% "")
   cohort_id <- suppressWarnings(as.integer(selected_row$cohort_id[[1]]))
   cohort_name <- as.character(selected_row$cohort_name[[1]] %||% sprintf("Cohort %s", cohort_id))
-  phenotype_name <- .studyAgentSlashInferPhenotypeName(role, cohort_id, cohort_name, context$intent_payload, role_phenotypes)
+  phenotype_name <- .studyAgentSlashInferPhenotypeName(
+    role = role,
+    cohort_id = cohort_id,
+    cohort_name = cohort_name,
+    intent_payload = context$intent_payload,
+    study_state = context$study_state,
+    overrides = role_phenotypes
+  )
   prefix <- sprintf("%s_%s", role, cohort_id)
   generated_path <- file.path(context$generated_dir, sprintf("%s_concept_sets.json", prefix))
   approved_path <- file.path(context$approved_dir, sprintf("%s_concept_sets.json", prefix))
@@ -919,6 +1008,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
                                                  role_phenotypes,
                                                  sample_size,
                                                  review_row_limit,
+                                                 profile_concept_limit,
                                                  use_descendants,
                                                  remove_pii,
                                                  reuse_rows,
@@ -928,11 +1018,19 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   role <- as.character(selected_row$role[[1]] %||% "")
   cohort_id <- suppressWarnings(as.integer(selected_row$cohort_id[[1]]))
   cohort_name <- as.character(selected_row$cohort_name[[1]] %||% sprintf("Cohort %s", cohort_id))
-  phenotype_name <- .studyAgentSlashInferPhenotypeName(role, cohort_id, cohort_name, context$intent_payload, role_phenotypes)
+  phenotype_name <- .studyAgentSlashInferPhenotypeName(
+    role = role,
+    cohort_id = cohort_id,
+    cohort_name = cohort_name,
+    intent_payload = context$intent_payload,
+    study_state = context$study_state,
+    overrides = role_phenotypes
+  )
   prefix <- sprintf("%s_%s", role, cohort_id)
   generated_path <- file.path(context$generated_dir, sprintf("%s_concept_sets.json", prefix))
   approved_path <- file.path(context$approved_dir, sprintf("%s_concept_sets.json", prefix))
   rows_path <- file.path(context$rows_dir, sprintf("%s_rows.json", prefix))
+  profile_input_path <- file.path(context$rows_dir, sprintf("%s_profile_input.json", prefix))
   rows_csv_path <- file.path(context$rows_dir, sprintf("%s_rows.csv", prefix))
   review_path <- file.path(context$reviews_dir, sprintf("%s_reviews.json", prefix))
   review_csv_path <- file.path(context$reviews_dir, sprintf("%s_reviews.csv", prefix))
@@ -942,9 +1040,38 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   }
   approved_payload <- .studyAgentSlashReadJson(approved_path, simplify = FALSE)
   approved_concept_sets <- .studyAgentSlashExtractConceptSets(approved_payload)
+  profile_selection <- .studyAgentSlashBoundKeeperProfileConceptSets(
+    approved_concept_sets,
+    profile_concept_limit
+  )
+  profile_concept_sets <- profile_selection$concept_sets
+  .studyAgentSlashWriteJson(
+    c(
+      list(
+        status = "profile_input",
+        role = role,
+        cohort_definition_id = cohort_id,
+        approved_concept_sets_path = approved_path,
+        profile_concept_limit_per_lane = profile_selection$per_lane_limit,
+        approved_concept_set_count = profile_selection$approved_count,
+        selected_concept_set_count = profile_selection$selected_count,
+        lane_counts = profile_selection$lane_counts
+      ),
+      list(concept_sets = profile_concept_sets)
+    ),
+    profile_input_path
+  )
+  message(sprintf(
+    "Keeper profile input for %s: using %s of %s approved concept item(s), capped at %s per lane. Details: %s",
+    cohort_name,
+    profile_selection$selected_count,
+    profile_selection$approved_count,
+    profile_selection$per_lane_limit,
+    profile_input_path
+  ))
 
   rows_source <- "generated"
-  rows_payload <- if (length(approved_concept_sets)) {
+  rows_payload <- if (length(profile_concept_sets)) {
     if (isTRUE(reuse_rows) && file.exists(rows_path)) {
       rows_source <- "reused"
       .studyAgentSlashReadJson(rows_path, simplify = FALSE)
@@ -956,7 +1083,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
           cohort_table = context$exec$cohortTable,
           cohort_definition_id = cohort_id,
           cdm_database_schema = context$exec$cdmDatabaseSchema,
-          keeper_concept_sets = approved_concept_sets,
+          keeper_concept_sets = profile_concept_sets,
           sample_size = sample_size,
           phenotype_name = phenotype_name,
           use_descendants = use_descendants,
@@ -967,8 +1094,8 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       payload
     }
   } else {
-    rows_source <- "missing_approved_concept_sets"
-    list(status = "error", error = "no approved concept sets", rows = list())
+    rows_source <- "missing_profile_concept_sets"
+    list(status = "error", error = "no approved concept sets selected for profile extraction", rows = list())
   }
   rows_error <- .studyAgentSlashPayloadErrorMessage(rows_payload)
   workflow_errors <- .studyAgentSlashAppendWorkflowError(
@@ -984,8 +1111,20 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
   row_records <- .studyAgentSlashExtractRows(rows_payload)
   sample_size_returned <- suppressWarnings(as.integer(rows_payload$sample_size_returned %||% rows_payload$result$sample_size_returned %||% rows_payload$full_result$sample_size_returned %||% length(row_records)))
   if (is.na(sample_size_returned)) sample_size_returned <- length(row_records)
-  profile_record_count <- suppressWarnings(as.integer(rows_payload$diagnostics$record_count %||% rows_payload$result$diagnostics$record_count %||% rows_payload$full_result$diagnostics$record_count %||% 0L))
+  profile_diagnostics <- rows_payload$diagnostics %||% rows_payload$result$diagnostics %||% rows_payload$full_result$diagnostics %||% list()
+  profile_record_count <- suppressWarnings(as.integer(profile_diagnostics$record_count %||% 0L))
   if (is.na(profile_record_count)) profile_record_count <- 0L
+  connection_identity <- profile_diagnostics$connection_identity %||% list()
+  cohort_source <- profile_diagnostics$cohort_source %||% list()
+  target_hash <- as.character(connection_identity$target_hash %||% "")
+  source_schema <- as.character(cohort_source$schema %||% context$exec$workDatabaseSchema %||% "")
+  source_table <- as.character(cohort_source$table %||% context$exec$cohortTable %||% "")
+  source_id <- as.character(cohort_source$cohort_definition_id %||% cohort_id)
+  profile_target_note <- if (nzchar(target_hash)) {
+    sprintf(" MCP target fingerprint %s; queried %s.%s for cohort_definition_id %s.", target_hash, source_schema, source_table, source_id)
+  } else {
+    sprintf(" MCP queried %s.%s for cohort_definition_id %s (target fingerprint was not returned).", source_schema, source_table, source_id)
+  }
   if (identical(rows_payload$status %||% "ok", "ok") && sample_size_returned <= 0L) {
     workflow_errors <- .studyAgentSlashAppendWorkflowError(
       workflow_errors,
@@ -994,7 +1133,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       cohort_id = cohort_id,
       cohort_name = cohort_name,
       phenotype_name = phenotype_name,
-      message = "Keeper profile generation returned zero sampled cohort rows. Confirm the MCP DB connection string points to the same database the R workflow used when generating cohorts, then verify the configured cohort table contains rows for this cohort_definition_id.",
+      message = paste0("Keeper profile generation returned zero sampled cohort rows. Compare the MCP target fingerprint and queried cohort source below with the R execution database, then verify that table contains this cohort_definition_id.", profile_target_note),
       path = rows_path
     )
   } else if (identical(rows_payload$status %||% "ok", "ok") && length(row_records) <= 0L) {
@@ -1045,10 +1184,21 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
 
   review_source <- "generated"
   review_records <- list()
+  stale_review_archive_path <- NULL
   if (isTRUE(current_resume_reviews) && file.exists(review_path)) {
     existing_review_payload <- .studyAgentSlashReadJson(review_path, simplify = FALSE)
-    review_records <- .studyAgentSlashExtractReviews(existing_review_payload)
-    if (length(review_records) > 0) review_source <- "resumed"
+    if (.studyAgentSlashReviewUsesGenericPhenotypeLabel(existing_review_payload)) {
+      stale_review_archive_path <- .studyAgentSlashArchiveStaleKeeperReview(review_path)
+      review_source <- "stale_generic_label_archived"
+      message(sprintf(
+        "Archived stale Keeper review with a generic phenotype label to %s. Regenerating reviews for '%s'.",
+        stale_review_archive_path,
+        phenotype_name
+      ))
+    } else {
+      review_records <- .studyAgentSlashExtractReviews(existing_review_payload)
+      if (length(review_records) > 0) review_source <- "resumed"
+    }
   }
   selected_row_indices <- .studyAgentSlashParseRowSelection(current_review_row_selection, length(row_records), current_review_row_limit)
   if (length(selected_row_indices) > 0) {
@@ -1152,6 +1302,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
     reviewed_row_count = length(review_records),
     review_row_limit = as.integer(current_review_row_limit),
     review_row_selection = if (is.null(current_review_row_selection)) NULL else as.character(current_review_row_selection),
+    supersedes_stale_review_path = stale_review_archive_path,
     reviews = review_records
   )
   .studyAgentSlashWriteJson(review_payload_out, review_path)
@@ -1187,8 +1338,10 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       generated_concept_sets_path = generated_path,
       approved_concept_sets_path = approved_path,
       rows_path = rows_path,
-      reviews_path = review_path,
+      profile_input_path = profile_input_path,
       approved_concept_set_count = length(approved_concept_sets),
+      profile_concept_set_count = profile_selection$selected_count,
+      profile_concept_limit_per_lane = profile_selection$per_lane_limit,
       row_count = length(row_records),
       reviewed_row_count = length(review_records),
       review_row_limit = as.integer(current_review_row_limit),
@@ -1197,6 +1350,7 @@ runKeeperCaseReviewWorkflow <- function(base_dir,
       selected_row_indices = as.list(selected_row_indices),
       rows_source = rows_source,
       reviews_source = review_source,
+      supersedes_stale_review_path = stale_review_archive_path,
       row_generation_status = rows_payload$status %||% "ok",
       sample_size_returned = sample_size_returned,
       profile_record_count = profile_record_count,
