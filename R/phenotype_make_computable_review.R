@@ -220,6 +220,17 @@
     conversion_artifact_dir = conversion_dir)
 }
 
+.studyAgentSlashCirceDefinitionPrintFriendly <- function(cohort) {
+  logic <- tryCatch(CirceR::cohortPrintFriendly(cohort), error = function(error) error)
+  if (inherits(logic, "error")) return(logic)
+  logic <- gsub("\\r\\n?", "\\n", paste(as.character(logic), collapse = ""), perl = TRUE)
+  concept_sets <- tryCatch(CirceR::conceptSetListPrintFriendly(cohort$ConceptSets %||% list()), error = function(error) error)
+  if (inherits(concept_sets, "error")) return(logic)
+  concept_sets <- gsub("\\r\\n?", "\\n", paste(as.character(concept_sets), collapse = ""), perl = TRUE)
+  if (!nzchar(trimws(concept_sets))) return(logic)
+  paste0(logic, "\n\n### Concept Set Expressions\n\n", concept_sets)
+}
+
 .studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline) {
   emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = TRUE,
     scope = scope, concept_review_mode = "provided_only", concept_sets = concept_sets)
@@ -237,9 +248,9 @@
   capr <- emitted$capr %||% list(); writeLines(as.character(capr$source %||% ""), file.path(artifact_dir, "phenotype_definition.R"))
   circe <- emitted$circe_json %||% emitted$circeJson; cohort <- if (is.character(circe)) jsonlite::fromJSON(circe, simplifyVector = FALSE) else circe
   .studyAgentSlashValidateCohortDefinitionJson(cohort, "phenotype_make_computable result")
-  readable <- tryCatch(CirceR::cohortPrintFriendly(cohort), error = function(error) error)
+  readable <- .studyAgentSlashCirceDefinitionPrintFriendly(cohort)
   if (inherits(readable, "error")) cat(sprintf("Could not render a print-friendly Circe definition: %s\n", conditionMessage(readable))) else {
-    readable <- gsub("\r\n?", "\n", paste(as.character(readable), collapse = ""), perl = TRUE)
+    readable <- paste(as.character(readable), collapse = "")
     readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
     if (identical(readable_action, "v")) cat(readable, "\n", sep = "")
     if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path, useBytes = TRUE); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
@@ -330,10 +341,6 @@
       if (choice %in% c("resume", "")) return(.studyAgentSlashPmcReviewHandoff(role_label, state$narrative_statement, state$scope, state$review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = FALSE))
       if (identical(choice, "source")) return(list(action = "retry"))
     }
-  }
-  .studyAgentSlashCreateComputableRoleSelectionFresh(role_label, role_statement, client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json)
-}
-
 .studyAgentSlashPmcPrintScope <- function(scope) {
   cat("\nScope to confirm:\n")
   cat(sprintf("- Index event: %s\n", scope$index_event %||% ""))
@@ -355,9 +362,9 @@
   cat(sprintf("Use path: %s\n", as.character(readiness$action_class %||% presentation$use_mode %||% "unknown")))
   source_payload <- (preparation$source_snapshot %||% list())$source_payload %||% list()
   if (identical(as.character(presentation$source %||% ""), "OHDSI Phenotype Library") && is.list(source_payload) && is.list(source_payload$PrimaryCriteria)) {
-    readable <- tryCatch(CirceR::cohortPrintFriendly(source_payload), error = function(error) NULL)
-    if (!is.null(readable)) {
-      readable <- gsub("\r\n?", "\n", paste(as.character(readable), collapse = ""), perl = TRUE)
+    readable <- .studyAgentSlashCirceDefinitionPrintFriendly(source_payload)
+    if (!inherits(readable, "error")) {
+      readable <- paste(as.character(readable), collapse = "")
       cat("Executable OHDSI definition (deterministic Circe rendering):\n", readable, "\n", sep = "")
     } else {
       summary <- trimws(as.character(presentation$plain_language_summary %||% ""))
@@ -383,24 +390,16 @@
     relationship <- composition$relationship %||% list()
     cat(sprintf("- Relationship: %s (%s -> %s)\n", as.character(relationship$type %||% ""), as.character(relationship$anchor %||% ""), as.character(relationship$target %||% "")))
     decisions <- composition$unresolved_decisions %||% list()
-    if (length(decisions)) {
-      cat("You must decide:\n")
-      for (decision in decisions) cat(sprintf("- %s\n", as.character(decision)))
-    }
+    if (length(decisions)) { cat("You must decide:\n"); for (decision in decisions) cat(sprintf("- %s\n", as.character(decision))) }
   }
   for (group in preparation$component_recommendations %||% list()) {
     candidates <- group$candidates %||% list()
-    if (length(candidates)) {
-      cat(sprintf("Suggested phenotypes for %s (%s):\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
-      for (candidate in candidates) {
-        card <- candidate$presentation %||% list()
-        cat(sprintf("- %s [%s; %s] %s\n", as.character(candidate$phenotype_name %||% candidate$phenotype_id %||% ""), as.character(candidate$phenotype_id %||% ""), as.character(candidate$computability_status %||% ""), as.character(card$plain_language_summary %||% candidate$short_description %||% "")))
-      }
-    } else if (identical(group$status %||% "", "no_candidates")) {
-      cat(sprintf("No indexed phenotype suggestions were returned for %s (%s); continue with the confirmed scope and concept review.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
-    } else if (identical(group$status %||% "", "unavailable")) {
-      cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
-    }
+    if (length(candidates)) { cat(sprintf("Suggested phenotypes for %s (%s):\n", as.character(group$role %||% "component"), as.character(group$query %||% ""))); for (candidate in candidates) { card <- candidate$presentation %||% list(); cat(sprintf("- %s [%s; %s] %s\n", as.character(candidate$phenotype_name %||% candidate$phenotype_id %||% ""), as.character(candidate$phenotype_id %||% ""), as.character(candidate$computability_status %||% ""), as.character(card$plain_language_summary %||% candidate$short_description %||% ""))) } }
+    else if (identical(group$status %||% "", "no_candidates")) cat(sprintf("No indexed phenotype suggestions were returned for %s (%s); continue with the confirmed scope and concept review.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
+    else if (identical(group$status %||% "", "unavailable")) cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
+  }
+  invisible(preparation)
+}
   }
   invisible(preparation)
 }
