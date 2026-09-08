@@ -95,27 +95,34 @@
   rows <- unlist(lapply(results, function(result) {
     candidates <- result$standard_candidates %||% list()
     if (!identical(result$status %||% "", "mapped") && !identical(result$status %||% "", "ambiguous_mapping")) return(list())
-    lapply(candidates, function(candidate) data.frame(
-      concept_set_name = paste0("Mapped source evidence: ", source_title),
-      concept_id = as.character(candidate$concept_id %||% ""),
-      concept_name = as.character(candidate$concept_name %||% ""),
-      domain = as.character(candidate$domain_id %||% ""),
-      concept_class_id = as.character((candidate$atlas_concept %||% list())$CONCEPT_CLASS_ID %||% ""),
-      concept_code = as.character((candidate$atlas_concept %||% list())$CONCEPT_CODE %||% ""),
-      invalid_reason = as.character((candidate$atlas_concept %||% list())$INVALID_REASON %||% ""),
-      invalid_reason_caption = as.character((candidate$atlas_concept %||% list())$INVALID_REASON_CAPTION %||% "Valid"),
-      standard_concept_caption = as.character((candidate$atlas_concept %||% list())$STANDARD_CONCEPT_CAPTION %||% "Standard"),
-      valid_start_date = as.character((candidate$atlas_concept %||% list())$VALID_START_DATE %||% ""),
-      valid_end_date = as.character((candidate$atlas_concept %||% list())$VALID_END_DATE %||% ""),
-      vocabulary_id = as.character(candidate$vocabulary_id %||% ""),
-      standard_concept = "S", standard_concept_status = as.character(candidate$mapping_method %||% "mapped_source_evidence"),
-      assessment_status = paste0("mapping_evidence:", as.character(candidate$domain_policy_status %||% "expected_domain_required")),
-      precision_eligible = if (identical(as.character(candidate$domain_policy_status %||% ""), "eligible_for_review")) "TRUE" else "FALSE",
-      relationship_evidence = sprintf("%s from %s:%s", as.character(candidate$mapping_method %||% "Maps to"), result$source_vocabulary_id %||% "", result$source_code %||% ""),
-      review_include_concept = "", review_include_descendants = "", review_include_mapped = "",
-      review_exclude_concepts = "", review_exclude_descendants = "", review_exclude_mapped = "",
-      stringsAsFactors = FALSE
-    ))
+    lapply(candidates, function(candidate) {
+      atlas_concept <- candidate$atlas_concept %||% list()
+      scalar <- function(value, default = "") {
+        if (is.null(value) || !length(value) || is.list(value) || is.na(value[[1]])) return(default)
+        as.character(value[[1]])
+      }
+      data.frame(
+        concept_set_name = paste0("Mapped source evidence: ", source_title),
+        concept_id = scalar(candidate$concept_id),
+        concept_name = scalar(candidate$concept_name),
+        domain = scalar(candidate$domain_id),
+        concept_class_id = scalar(atlas_concept$CONCEPT_CLASS_ID),
+        concept_code = scalar(atlas_concept$CONCEPT_CODE),
+        invalid_reason = scalar(atlas_concept$INVALID_REASON),
+        invalid_reason_caption = scalar(atlas_concept$INVALID_REASON_CAPTION, "Valid"),
+        standard_concept_caption = scalar(atlas_concept$STANDARD_CONCEPT_CAPTION, "Standard"),
+        valid_start_date = scalar(atlas_concept$VALID_START_DATE),
+        valid_end_date = scalar(atlas_concept$VALID_END_DATE),
+        vocabulary_id = scalar(candidate$vocabulary_id),
+        standard_concept = "S", standard_concept_status = scalar(candidate$mapping_method, "mapped_source_evidence"),
+        assessment_status = paste0("mapping_evidence:", scalar(candidate$domain_policy_status, "expected_domain_required")),
+        precision_eligible = if (identical(scalar(candidate$domain_policy_status), "eligible_for_review")) "TRUE" else "FALSE",
+        relationship_evidence = sprintf("%s from %s:%s", scalar(candidate$mapping_method, "Maps to"), scalar(result$source_vocabulary_id), scalar(result$source_code)),
+        review_include_concept = "", review_include_descendants = "", review_include_mapped = "",
+        review_exclude_concepts = "", review_exclude_descendants = "", review_exclude_mapped = "",
+        stringsAsFactors = FALSE
+      )
+    })
   }), recursive = FALSE)
   if (!length(rows)) return(NULL)
   rows <- do.call(rbind, rows)
