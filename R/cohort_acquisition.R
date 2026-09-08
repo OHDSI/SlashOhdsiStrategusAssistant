@@ -552,7 +552,8 @@
     sub("^['\\\"](.*)['\\\"]$", "\\1", value)
   }
   default_narrative <- trimws(as.character(role_statement %||% ""))
-  narrative <- prompt(sprintf("Narrative statement for the new %s phenotype [%s]: ", tolower(role_label), default_narrative))
+  cat("You are authoring a new local OMOP cohort definition. This statement is not an imported source phenotype definition.\\n")
+  narrative <- prompt(sprintf("Working local OMOP cohort statement for the new %s [%s]: ", tolower(role_label), default_narrative))
   if (is_back_signal(narrative)) return(narrative)
   if (!nzchar(narrative)) narrative <- default_narrative
   if (!nzchar(narrative)) return(list(action = "retry"))

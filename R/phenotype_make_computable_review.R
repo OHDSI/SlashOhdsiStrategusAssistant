@@ -338,7 +338,7 @@
   cat(sprintf("Source: %s\n", as.character(presentation$source %||% "Unknown")))
   cat(sprintf("Use path: %s\n", as.character(readiness$action_class %||% presentation$use_mode %||% "unknown")))
   summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) cat(sprintf("%s\n", summary))
-  gaps <- presentation$important_gaps %||% list(); if (length(gaps)) { cat("Needs review:\n"); for (gap in gaps) cat(sprintf("- %s\n", as.character(gap))) }
+  summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) { if (identical(as.character(presentation$source %||% ""), "VA CIPHER")) cat(sprintf("Source algorithm narrative (evidence only; it may contain source-specific code-list names or record-type fields and is not executable OHDSI logic):\\n%s\\n", summary)) else cat(sprintf("Definition summary:\\n%s\\n", summary)) }
   mapping <- preparation$mapping_evidence %||% list(); coverage <- mapping$coverage %||% list()
   if (identical(mapping$status %||% "", "ok")) cat(sprintf("Mapping evidence: %s mapped, %s ambiguous, %s unmatched source code(s); review is required.\n", coverage$mapped_code_count %||% 0L, coverage$ambiguous_mapping_count %||% 0L, coverage$unmatched_source_code_count %||% 0L))
   else if (identical(mapping$status %||% "", "unavailable")) cat("Mapping evidence: OMOP vocabulary lookup was unavailable; do not infer mapping coverage.\n")
@@ -358,9 +358,26 @@
   invisible(preparation)
 }
 
+.studyAgentSlashPreviewPhenotypeCandidate <- function(client, phenotype_id, role_label, workflow_type,
+                                                      check_vocabulary_database = TRUE) {
+  phenotype_id <- trimws(as.character(phenotype_id %||% ""))
+  if (!nzchar(phenotype_id)) stop("Selected ACP recommendation has no stable phenotype_id.")
+  preparation <- .studyAgentSlashAcpPhenotypeConversionPrepare(
+    client = client,
+    phenotype_id = phenotype_id,
+    recommendation_context = list(recommendation_role = tolower(role_label), workflow_type = workflow_type),
+    check_vocabulary_database = check_vocabulary_database
+  )
+  if (!identical(as.character(preparation$status %||% ""), "ok")) {
+    stop("ACP could not prepare a candidate preview.")
+  }
+  .studyAgentSlashPrintPhenotypePresentation(preparation)
+  invisible(preparation)
+}
+
 .studyAgentSlashPreparePhenotypeConversion <- function(client, phenotype_id, role_label,
                                                         output_dir, workflow_type,
-                                                        check_vocabulary_database = TRUE,
+                                                        check_vocabulary_database = TRUE, display = TRUE,
                                                         write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
   phenotype_id <- trimws(as.character(phenotype_id %||% ""))
   if (!nzchar(phenotype_id)) stop("Provide a non-empty phenotype_id.")
@@ -384,7 +401,7 @@
     workflow_type = workflow_type, next_action = preparation$next_action %||% "",
     source_payload_sha256 = snapshot$source_payload_sha256 %||% ""),
     file.path(artifact_dir, "conversion-state.json"))
-  .studyAgentSlashPrintPhenotypePresentation(preparation)
+  if (isTRUE(display)) .studyAgentSlashPrintPhenotypePresentation(preparation)
   preparation$artifact_dir <- artifact_dir
   preparation
 }

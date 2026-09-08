@@ -2564,23 +2564,39 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     }
 
     selection_results <- lapply(selected_recs, function(selected) {
+      phenotype_id <- trimws(as.character(selected$phenotype_id %||% recommendation_identifier(selected)))
+      if (!nzchar(phenotype_id)) stop(unsupported_recommendation_message(selected, role_label))
+
+      if (isTRUE(interactive)) {
+        if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+        cat("\\n== Candidate definition preview ==\\n")
+        .studyAgentSlashPreviewPhenotypeCandidate(
+          client = dialogue_acp_client$client,
+          phenotype_id = phenotype_id,
+          role_label = role_label,
+          workflow_type = workflow_type
+        )
+        choice <- toupper(trimws(as.character(readline_with_navigation(
+          "Use this candidate as the starting point [type USE; /back returns to cohort-source selection]: "
+        ) %||% "")))
+        if (is_back_signal(choice) || !identical(choice, "USE")) return(list(action = "retry"))
+      }
+
       if (isTRUE(recommendation_is_circe_computable(selected))) {
         return(list(action = "handled", imported = list(
           .studyAgentSlashImportAcpCohortDefinition(selected, imported_definition_dir)
         )))
       }
-      phenotype_id <- recommendation_identifier(selected)
-      if (!nzchar(phenotype_id)) stop(unsupported_recommendation_message(selected, role_label))
       if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
       preparation <- .studyAgentSlashPreparePhenotypeConversion(
         client = dialogue_acp_client$client,
         phenotype_id = phenotype_id,
         role_label = role_label,
         output_dir = output_dir,
-        workflow_type = workflow_type
+        workflow_type = workflow_type, display = FALSE
       )
-      cat(sprintf("Prepared %s for review at %s. Continue through the review-gated create workflow.\\n",
-        recommendation_name(selected), preparation$artifact_dir %||% "phenotype-conversion"))
+      cat(sprintf("A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\\n",
+        preparation$artifact_dir %||% "phenotype-conversion"))
       .studyAgentSlashCreateComputableRoleSelection(
         role_label,
         statement,
