@@ -552,13 +552,35 @@
     sub("^['\\\"](.*)['\\\"]$", "\\1", value)
   }
   default_narrative <- trimws(as.character(role_statement %||% ""))
-  cat("You are authoring a new local OMOP cohort definition. This statement is not an imported source phenotype definition.\\n")
   narrative <- prompt(sprintf("Working local OMOP cohort statement for the new %s [%s]: ", tolower(role_label), default_narrative))
-  if (is_back_signal(narrative)) return(narrative)
+  cat("You are authoring a new local OMOP cohort definition. This statement is not an imported source phenotype definition.\n")
   if (!nzchar(narrative)) narrative <- default_narrative
   if (!nzchar(narrative)) return(list(action = "retry"))
   checklist <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = FALSE)
   write_json(checklist, file.path(artifact_dir, "scope-checklist.json"))
+  source_conversion_dir <- file.path(output_dir, "phenotype-conversion", tolower(role_label))
+  source_presentation_path <- file.path(source_conversion_dir, "presentation.json")
+  source_mapping_path <- file.path(source_conversion_dir, "mapping-evidence.json")
+  if (file.exists(source_presentation_path)) {
+    source_presentation <- tryCatch(jsonlite::read_json(source_presentation_path, simplifyVector = FALSE), error = function(e) NULL)
+    if (is.list(source_presentation)) {
+      source_title <- trimws(as.character(source_presentation$title %||% ""))
+      source_summary <- gsub("\\s+", " ", trimws(as.character(source_presentation$plain_language_summary %||% "")), perl = TRUE)
+      mapped_domains <- character(0)
+      if (file.exists(source_mapping_path)) {
+        source_mapping <- tryCatch(jsonlite::read_json(source_mapping_path, simplifyVector = FALSE), error = function(e) NULL)
+        mapped_domains <- unique(unlist(lapply(source_mapping$code_results %||% list(), function(result) {
+          vapply(result$standard_candidates %||% list(), function(candidate) as.character(candidate$domain_id %||% ""), character(1))
+        }), use.names = FALSE))
+        mapped_domains <- mapped_domains[nzchar(mapped_domains)]
+      }
+      cat("\nSource-informed scope suggestions (unconfirmed; nothing is prefilled):\n")
+      if (nzchar(source_title)) cat(sprintf("- Consider whether the source candidate title helps name the index event: %s\n", source_title))
+      if (length(mapped_domains)) cat(sprintf("- Mapped source evidence contains candidate OMOP domain(s): %s\n", paste(mapped_domains, collapse = ", ")))
+      if (nzchar(source_summary)) cat(sprintf("- Source narrative evidence: %s\n", substr(source_summary, 1L, 600L)))
+      cat("Use these only as review context. You must still choose and confirm every scope value.\n")
+    }
+  }
   cat("\nACP returned a scope checklist. No definition has been created.\n")
   cat("Answer each scope question deliberately. Press /back to return to cohort-source selection.\n")
   index_event <- prompt("Index event clinical term: ")
@@ -644,7 +666,7 @@
     if (identical(as.character(refreshed_preparation$status %||% ""), "ok")) {
       write_json(refreshed_preparation$mapping_evidence %||% list(), file.path(conversion_dir, "mapping-evidence-confirmed-domains.json"))
       write_json(refreshed_preparation$mapping_evidence %||% list(), file.path(conversion_dir, "mapping-evidence.json"))
-      cat(sprintf("Refreshed mapping evidence for confirmed OMOP domain(s): %s. No concepts were selected.\n", paste(confirmed_domains, collapse = ", ")))
+      cat(sprintf("Refreshed mapping evidence for confirmed OMOP domain(s): %s. This only updates the review evidence; no concepts have been selected.\n", paste(confirmed_domains, collapse = ", ")))
     } else {
       cat("Could not refresh mapping evidence for the confirmed domain; continuing without inferred mapping eligibility.\n")
     }
@@ -657,7 +679,8 @@
     mapping_review <- .studyAgentSlashPmcWriteMappingEvidenceReview(mapping_evidence %||% list(),
       as.character(source_snapshot$title %||% narrative), artifact_dir, write_json)
     if (is.list(mapping_review)) {
-      cat(sprintf("%s mapped source-evidence candidate(s), including %s eligible for the confirmed domain, are available in %s. They are not selected.\n", mapping_review$candidate_count, mapping_review$eligible_candidate_count %||% 0L, mapping_review$csv))
+      coverage <- mapping_evidence$coverage %||% list()
+      cat(sprintf("Mapping reconciliation: %s source code(s) checked; %s mapped, %s ambiguous, and %s unmatched. After deduplication, %s candidate concept(s) are available; %s are eligible for the confirmed domain in %s. These are review options only; no concepts have been selected.\n", coverage$requested_code_count %||% 0L, coverage$mapped_code_count %||% 0L, coverage$ambiguous_mapping_count %||% 0L, coverage$unmatched_source_code_count %||% 0L, mapping_review$candidate_count %||% 0L, mapping_review$eligible_candidate_count %||% 0L, mapping_review$csv))
       atlas_exports <- as.character(mapping_review$atlas_exports %||% character(0))
       atlas_mode <- as.character(mapping_review$atlas_recommendation %||% "optional")
       if (length(atlas_exports)) cat(sprintf("Atlas import file(s): %s\n", paste(atlas_exports, collapse = ", ")))

@@ -333,24 +333,25 @@
 }
 
 .studyAgentSlashPrintPhenotypePresentation <- function(preparation) {
+.studyAgentSlashPrintPhenotypePresentation <- function(preparation) {
   presentation <- preparation$presentation %||% list(); readiness <- preparation$readiness %||% list()
   cat(sprintf("\n%s\n", as.character(presentation$title %||% preparation$phenotype_id %||% "Phenotype candidate")))
   cat(sprintf("Source: %s\n", as.character(presentation$source %||% "Unknown")))
   cat(sprintf("Use path: %s\n", as.character(readiness$action_class %||% presentation$use_mode %||% "unknown")))
-  summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) cat(sprintf("%s\n", summary))
-  summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) { if (identical(as.character(presentation$source %||% ""), "VA CIPHER")) cat(sprintf("Source algorithm narrative (evidence only; it may contain source-specific code-list names or record-type fields and is not executable OHDSI logic):\\n%s\\n", summary)) else cat(sprintf("Definition summary:\\n%s\\n", summary)) }
-  mapping <- preparation$mapping_evidence %||% list(); coverage <- mapping$coverage %||% list()
-  if (identical(mapping$status %||% "", "ok")) cat(sprintf("Mapping evidence: %s mapped, %s ambiguous, %s unmatched source code(s); review is required.\n", coverage$mapped_code_count %||% 0L, coverage$ambiguous_mapping_count %||% 0L, coverage$unmatched_source_code_count %||% 0L))
-  else if (identical(mapping$status %||% "", "unavailable")) cat("Mapping evidence: OMOP vocabulary lookup was unavailable; do not infer mapping coverage.\n")
-  else if (identical(mapping$status %||% "", "not_requested")) cat("Mapping evidence: OMOP vocabulary lookup was not requested; source codes remain review evidence only.\n")
-  composition <- preparation$composition_seed %||% NULL
-  if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {
-    cat("Proposed relationship (requires confirmation):\n"); for (component in composition$components %||% list()) cat(sprintf("- %s: %s\n", as.character(component$role %||% "component"), as.character(component$label %||% "")))
-    relationship <- composition$relationship %||% list(); cat(sprintf("- Relationship: %s (%s -> %s)\n", as.character(relationship$type %||% ""), as.character(relationship$anchor %||% ""), as.character(relationship$target %||% "")))
-    decisions <- composition$unresolved_decisions %||% list(); if (length(decisions)) { cat("You must decide:\n"); for (decision in decisions) cat(sprintf("- %s\n", as.character(decision))) }
+  source_payload <- (preparation$source_snapshot %||% list())$source_payload %||% list()
+  if (identical(as.character(presentation$source %||% ""), "OHDSI Phenotype Library") && is.list(source_payload) && is.list(source_payload$PrimaryCriteria)) {
+    readable <- tryCatch(CirceR::cohortPrintFriendly(source_payload), error = function(error) NULL)
+    if (!is.null(readable)) {
+      readable <- gsub("\r\n?", "\n", paste(as.character(readable), collapse = ""), perl = TRUE)
+      cat("Executable OHDSI definition (deterministic Circe rendering):\n", readable, "\n", sep = "")
+    } else {
+      summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) cat(sprintf("Definition summary:\n%s\n", summary))
+    }
+  } else {
+    summary <- trimws(as.character(presentation$plain_language_summary %||% ""))
+    if (nzchar(summary)) cat(sprintf("Source algorithm narrative (evidence only; it may contain source-specific code-list names or record-type fields and is not executable OHDSI logic):\n%s\n", summary))
   }
-  for (group in preparation$component_recommendations %||% list()) {
-    candidates <- group$candidates %||% list()
+  mapping <- preparation$mapping_evidence %||% list(); coverage <- mapping$coverage %||% list()
     if (length(candidates)) { cat(sprintf("Suggested phenotypes for %s (%s):\n", as.character(group$role %||% "component"), as.character(group$query %||% ""))); for (candidate in candidates) { card <- candidate$presentation %||% list(); cat(sprintf("- %s [%s; %s] %s\n", as.character(candidate$phenotype_name %||% candidate$phenotype_id %||% ""), as.character(candidate$phenotype_id %||% ""), as.character(candidate$computability_status %||% ""), as.character(card$plain_language_summary %||% candidate$short_description %||% ""))) } }
     else if (identical(group$status %||% "", "no_candidates")) cat(sprintf("No indexed phenotype suggestions were returned for %s (%s); continue with the confirmed scope and concept review.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
     else if (identical(group$status %||% "", "unavailable")) cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))

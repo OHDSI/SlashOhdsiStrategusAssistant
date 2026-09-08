@@ -549,7 +549,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
     if (isTRUE(interactive)) {
       if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
-      cat("\\n== Candidate definition preview ==\\n")
+      cat("\n== Creating candidate definition preview ==\n")
       .studyAgentSlashPreviewPhenotypeCandidate(
         client = dialogue_acp_client$client,
         phenotype_id = phenotype_id,
@@ -581,7 +581,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
       workflow_type = "incidence", display = FALSE
     )
     cat(sprintf(
-      "A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\\n",
+      "A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n",
       preparation$artifact_dir %||% "phenotype-conversion"
     ))
     .studyAgentSlashCreateComputableRoleSelection(
@@ -1685,7 +1685,7 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("target_recommendation", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        ok_any <- prompt_yesno("Are any of these acceptable for the target?", default = TRUE)
+        ok_any <- prompt_yesno("Do any of these look like potential candidates for the target?", default = TRUE)
         if (!ok_any) {
           widen <- prompt_yesno("Widen candidate pool and try again?", default = TRUE)
           if (widen) {
@@ -1710,7 +1710,7 @@ Available exploration commands
               cat(sprintf("%d. %s (ID %s)\n", i, rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?"))
               if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
             }
-            ok_any <- prompt_yesno("Are any of these acceptable?", default = TRUE)
+            ok_any <- prompt_yesno("Do any of these look like potential candidates?", default = TRUE)
           }
           if (!ok_any) {
             message("Generating advisory guidance (this may take a moment)...")
@@ -1750,9 +1750,6 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("target_selection", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, outcome_statement = outcome_statement))
-        if (!prompt_yesno("Continue to target cohort selection?", default = TRUE)) {
-          return(invisible(list(output_dir = output_dir, recommendations = recs_target_path)))
-        }
         gate <- readline_with_navigation("Press Enter to continue to target cohort selection, or type /back: ")
         if (is_back_signal(gate)) next
         cat("\n== Step 3: Select target cohorts ==\n")
@@ -2005,23 +2002,16 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("outcome_recommendation", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        ok_any <- prompt_yesno("Are any of these acceptable for the outcomes?", default = TRUE)
+        ok_any <- prompt_yesno("Do any of these look like potential candidates for the outcome?", default = TRUE)
         if (!ok_any) {
           widen <- prompt_yesno("Widen candidate pool and try again?", default = TRUE)
           if (widen) {
             message("Generating additional recommendations (next window)...")
             used_window2_outcome <- TRUE
-            body <- list(
-              study_intent = outcome_statement,
-              top_k = topK,
-              max_results = maxResults,
-              candidate_limit = candidateLimit,
-              candidate_offset = candidateLimit
-            )
+            body <- list(study_intent = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit, candidate_offset = candidateLimit)
             rec_response_outcome <- acp_try("/flows/phenotype_recommendation", body, "outcome_recommendation_window2")
             recs_outcome_path <- file.path(output_dir, "recommendations_outcome_window2.json")
             write_json(rec_response_outcome, recs_outcome_path)
-
             recs_core_outcome <- rec_response_outcome$recommendations %||% rec_response_outcome
             recommendations_outcome <- recs_core_outcome$phenotype_recommendations %||% list()
             cat("\n== Outcome Phenotype Recommendations (window 2) ==\n")
@@ -2030,7 +2020,7 @@ Available exploration commands
               cat(sprintf("%d. %s (ID %s)\n", i, rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?"))
               if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
             }
-            ok_any <- prompt_yesno("Are any of these acceptable?", default = TRUE)
+            ok_any <- prompt_yesno("Do any of these look like potential candidates?", default = TRUE)
           }
           if (!ok_any) {
             message("Generating advisory guidance (this may take a moment)...")
@@ -2048,9 +2038,7 @@ Available exploration commands
               for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
             }
             mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path))
-            next_action <- tolower(trimws(as.character(readline_with_navigation(
-              "Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
-            ) %||% "")))
+            next_action <- tolower(trimws(as.character(readline_with_navigation("Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: ") %||% "")))
             if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
             if (identical(next_action, "rewrite")) {
               revised_statement <- readline_with_navigation("Revised outcome cohort statement: ")
@@ -2070,12 +2058,9 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("outcome_selection", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement))
-        if (!prompt_yesno("Continue to outcome cohort selection?", default = TRUE)) {
-          return(invisible(list(output_dir = output_dir, recommendations = recs_outcome_path)))
-        }
         gate <- readline_with_navigation("Press Enter to continue to outcome cohort selection, or type /back: ")
         if (is_back_signal(gate)) next
-        cat("\n== Step 6: Select outcome cohorts ==\n")
+        cat("\n== Step 3: Select outcome cohorts ==\n")
       }
 
       selected_ids_outcome <- NULL

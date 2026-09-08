@@ -2569,7 +2569,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
 
       if (isTRUE(interactive)) {
         if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
-        cat("\\n== Candidate definition preview ==\\n")
+        cat("\n== Creating candidate definition preview ==\n")
         .studyAgentSlashPreviewPhenotypeCandidate(
           client = dialogue_acp_client$client,
           phenotype_id = phenotype_id,
@@ -2595,7 +2595,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         output_dir = output_dir,
         workflow_type = workflow_type, display = FALSE
       )
-      cat(sprintf("A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\\n",
+      cat(sprintf("A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n",
         preparation$artifact_dir %||% "phenotype-conversion"))
       .studyAgentSlashCreateComputableRoleSelection(
         role_label,
@@ -2788,7 +2788,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
           cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
         }
       }
-      ok_any <- prompt_yesno(sprintf("Are any of these acceptable for the %s?", role_key), default = TRUE)
+      ok_any <- prompt_yesno(sprintf("Do any of these look like potential candidates for the %s?", role_key), default = TRUE)
       if (!ok_any && ensure_acp_ready(acpUrl)) {
         widen <- prompt_yesno("Widen candidate pool and try again?", default = TRUE)
         if (isTRUE(widen)) {
@@ -2823,7 +2823,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
               cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
             }
           }
-          ok_any <- prompt_yesno(sprintf("Are any of these acceptable for the %s?", role_key), default = TRUE)
+          ok_any <- prompt_yesno(sprintf("Do any of these look like potential candidates for the %s?", role_key), default = TRUE)
         }
         if (!ok_any) {
           used_advice <- TRUE
