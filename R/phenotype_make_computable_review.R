@@ -342,6 +342,17 @@
       if (identical(choice, "source")) return(list(action = "retry"))
     }
   }
+  .studyAgentSlashCreateComputableRoleSelectionFresh(
+    role_label = role_label,
+    role_statement = role_statement,
+    client = client,
+    output_dir = output_dir,
+    imported_definition_dir = imported_definition_dir,
+    interactive = interactive,
+    readline_with_navigation = readline_with_navigation,
+    is_back_signal = is_back_signal,
+    write_json = write_json
+  )
 }
 
 .studyAgentSlashPmcPrintScope <- function(scope) {
