@@ -615,7 +615,9 @@
       outcome_term <- prompt("Follow-on Condition clinical term [Cough]: ")
       if (is_back_signal(outcome_term)) return(outcome_term)
       if (!nzchar(outcome_term)) outcome_term <- "Cough"
-      followup_days <- suppressWarnings(as.integer(prompt("Maximum days after exposure for the follow-on Condition [30]: ")))
+      followup_raw <- prompt("Maximum days after exposure for the follow-on Condition [30]: ")
+      if (is_back_signal(followup_raw)) return(followup_raw)
+      followup_days <- if (!nzchar(followup_raw)) 30L else suppressWarnings(as.integer(followup_raw))
       if (is.na(followup_days) || followup_days < 0L) stop("Follow-on window must be a non-negative integer.")
       washout_raw <- prompt(sprintf("Clean-window days for exposure and outcome [%s]: ", prior_observation))
       if (is_back_signal(washout_raw)) return(washout_raw)
