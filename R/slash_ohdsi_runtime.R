@@ -149,3 +149,17 @@
     candidate_limit = candidate_limit
   )
 }
+
+
+.studyAgentSlashAcpPhenotypeConversionPrepare <- function(client, phenotype_id,
+                                                           recommendation_context = list(),
+                                                           expected_domains = character(0),
+                                                           check_vocabulary_database = TRUE) {
+  slashOhdsiAcpClient::acp_phenotype_conversion_prepare(
+    client = client,
+    phenotype_id = phenotype_id,
+    expected_domains = expected_domains,
+    recommendation_context = recommendation_context,
+    check_vocabulary_database = check_vocabulary_database
+  )
+}
