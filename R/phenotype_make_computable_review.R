@@ -68,7 +68,7 @@
           CONCEPT_ID = suppressWarnings(as.integer(row$concept_id)),
           CONCEPT_NAME = as.character(row$concept_name),
           DOMAIN_ID = as.character(row$domain),
-          INVALID_REASON = if (nzchar(as.character(row$invalid_reason %||% ""))) as.character(row$invalid_reason) else NULL,
+          INVALID_REASON = if (nzchar(as.character(row$invalid_reason %||% ""))) as.character(row$invalid_reason) else NA_character_,
           INVALID_REASON_CAPTION = as.character(row$invalid_reason_caption %||% "Valid"),
           STANDARD_CONCEPT = as.character(row$standard_concept %||% "S"),
           STANDARD_CONCEPT_CAPTION = as.character(row$standard_concept_caption %||% "Standard"),
