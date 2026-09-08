@@ -550,16 +550,23 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     if (isTRUE(interactive)) {
       if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
       cat("\n== Creating candidate definition preview ==\n")
-      .studyAgentSlashPreviewPhenotypeCandidate(
+      preparation <- .studyAgentSlashPreviewPhenotypeCandidate(
         client = dialogue_acp_client$client,
         phenotype_id = phenotype_id,
         role_label = role_label,
         workflow_type = "incidence"
       )
-      choice <- toupper(trimws(as.character(readline_with_navigation(
-        "Use this candidate as the starting point [type USE; /back returns to cohort-source selection]: "
-      ) %||% "")))
-      if (is_back_signal(choice) || !identical(choice, "USE")) return(list(action = "retry"))
+      repeat {
+        choice <- trimws(as.character(readline_with_navigation(
+          "Use this candidate [USE; codes=list source code/text evidence; /back]: "
+        ) %||% ""))
+        if (tolower(choice) %in% c("codes", "evidence", "list")) {
+          .studyAgentSlashPrintPhenotypeSourceEvidence(preparation)
+          next
+        }
+        break
+      }
+      if (is_back_signal(choice) || !identical(toupper(choice), "USE")) return(list(action = "retry"))
     }
 
     if (!is.null(.studyAgentSlashAcpRecommendationJson(rec))) {

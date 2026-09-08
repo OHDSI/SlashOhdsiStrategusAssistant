@@ -275,7 +275,7 @@
   .studyAgentSlashPmcSaveState(artifact_dir, role_label, narrative, scope, review, "awaiting_review", write_json)
   cat(sprintf("\nReview state and frozen ACP artifacts are saved in %s.\n", artifact_dir))
   runs <- review$concept_provenance$search_runs %||% list()
-  for (run in runs) cat(sprintf("- %s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
+  for (run in runs) cat(sprintf("- %s%s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", if (identical(run$candidate_kind %||% "", "classification_ancestor")) " [classification ancestor fallback; review only]" else "", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
   zero <- identical(as.integer(review$candidate_count %||% 0L), 0L)
   exact_truncated <- Filter(function(run) isTRUE(run$truncated) && identical(run$matched_count_status %||% "", "exact") && !is.null(run$matched_count), runs)
   max_exact <- if (length(exact_truncated)) max(vapply(exact_truncated, function(run) as.integer(run$matched_count), integer(1))) else 0L
@@ -413,6 +413,31 @@
     else if (identical(group$status %||% "", "unavailable")) cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
   }
   invisible(preparation)
+}
+
+.studyAgentSlashPrintPhenotypeSourceEvidence <- function(preparation, maximum_values_per_group = 100L) {
+  source <- (preparation$source_snapshot %||% list())$source_payload %||% list()
+  algorithm <- source$algorithm %||% list()
+  groups <- algorithm$assocCodes %||% list()
+  if (!is.list(groups) || !length(groups)) {
+    cat("No source code or text-value groups are available for this candidate.\n")
+    return(invisible(NULL))
+  }
+  cat("\n== Source code/text evidence (review context only) ==\n")
+  for (group in groups) {
+    if (!is.list(group)) next
+    values <- vapply(group$codes %||% list(), function(item) trimws(as.character(item$code %||% item)), character(1))
+    values <- values[nzchar(values)]
+    label <- trimws(as.character(group$description %||% group$otherCodeType %||% ""))
+    if (!nzchar(label)) label <- sprintf("CIPHER code type %s%s", as.character(group$codeType %||% "unknown"), if (!is.null(group$subCodeType)) sprintf(" / subtype %s", as.character(group$subCodeType)) else "")
+    cat(sprintf("- %s: %s value(s)\n", label, length(values)))
+    if (length(values)) {
+      shown <- head(values, maximum_values_per_group)
+      cat(sprintf("  %s%s\n", paste(shown, collapse = ", "), if (length(values) > length(shown)) sprintf(" ... [%s additional value(s) omitted]", length(values) - length(shown)) else ""))
+    }
+  }
+  cat("These values are source evidence only. Text snippets are not automatically mapped or used as a concept set.\n")
+  invisible(NULL)
 }
 
 .studyAgentSlashPreviewPhenotypeCandidate <- function(client, phenotype_id, role_label, workflow_type,
