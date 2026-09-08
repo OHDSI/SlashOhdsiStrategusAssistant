@@ -341,6 +341,9 @@
       if (choice %in% c("resume", "")) return(.studyAgentSlashPmcReviewHandoff(role_label, state$narrative_statement, state$scope, state$review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = FALSE))
       if (identical(choice, "source")) return(list(action = "retry"))
     }
+  }
+}
+
 .studyAgentSlashPmcPrintScope <- function(scope) {
   cat("\nScope to confirm:\n")
   cat(sprintf("- Index event: %s\n", scope$index_event %||% ""))
@@ -397,9 +400,6 @@
     if (length(candidates)) { cat(sprintf("Suggested phenotypes for %s (%s):\n", as.character(group$role %||% "component"), as.character(group$query %||% ""))); for (candidate in candidates) { card <- candidate$presentation %||% list(); cat(sprintf("- %s [%s; %s] %s\n", as.character(candidate$phenotype_name %||% candidate$phenotype_id %||% ""), as.character(candidate$phenotype_id %||% ""), as.character(candidate$computability_status %||% ""), as.character(card$plain_language_summary %||% candidate$short_description %||% ""))) } }
     else if (identical(group$status %||% "", "no_candidates")) cat(sprintf("No indexed phenotype suggestions were returned for %s (%s); continue with the confirmed scope and concept review.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
     else if (identical(group$status %||% "", "unavailable")) cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
-  }
-  invisible(preparation)
-}
   }
   invisible(preparation)
 }
