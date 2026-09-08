@@ -223,15 +223,34 @@
 .studyAgentSlashCirceDefinitionPrintFriendly <- function(cohort) {
   logic <- tryCatch(CirceR::cohortPrintFriendly(cohort), error = function(error) error)
   if (inherits(logic, "error")) return(logic)
-  logic <- gsub("\\r\\n?", "\\n", paste(as.character(logic), collapse = ""), perl = TRUE)
+  logic <- gsub("\\r\\n?", "\n", paste(as.character(logic), collapse = ""), perl = TRUE)
   concept_sets <- tryCatch(CirceR::conceptSetListPrintFriendly(cohort$ConceptSets %||% list()), error = function(error) error)
   if (inherits(concept_sets, "error")) return(logic)
-  concept_sets <- gsub("\\r\\n?", "\\n", paste(as.character(concept_sets), collapse = ""), perl = TRUE)
+  concept_sets <- gsub("\\r\\n?", "\n", paste(as.character(concept_sets), collapse = ""), perl = TRUE)
   if (!nzchar(trimws(concept_sets))) return(logic)
   paste0(logic, "\n\n### Concept Set Expressions\n\n", concept_sets)
 }
 
-.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline) {
+.studyAgentSlashPmcApprovedConceptSetPrintFriendly <- function(artifact_dir, approval_path = file.path(artifact_dir, "concept-set-approval.json")) {
+  if (!file.exists(approval_path)) return("")
+  approval <- tryCatch(jsonlite::read_json(approval_path, simplifyVector = FALSE), error = function(error) NULL)
+  preview <- approval$approval_preview %||% list()
+  if (!length(preview)) return("")
+  lines <- c("### Approved Concept-Set Review", "")
+  for (item in preview) {
+    label <- as.character(item$concept_set_name %||% "Concept set")
+    name <- as.character(item$concept_name %||% "")
+    concept_id <- as.character(item$concept_id %||% "")
+    domain <- as.character(item$domain %||% "")
+    policy <- as.character(item$policy %||% "")
+    details <- c(name, if (nzchar(concept_id)) paste0("concept ", concept_id), domain, policy)
+    details <- paste(details[nzchar(details)], collapse = "; ")
+    lines <- c(lines, sprintf("- %s: %s", label, details))
+  }
+  paste(lines, collapse = "\n")
+}
+
+.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline, approval_path = file.path(artifact_dir, "concept-set-approval.json")) {
   emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = TRUE,
     scope = scope, concept_review_mode = "provided_only", concept_sets = concept_sets)
   write_json(emitted, file.path(artifact_dir, "emission-response.json"))
@@ -251,6 +270,8 @@
   readable <- .studyAgentSlashCirceDefinitionPrintFriendly(cohort)
   if (inherits(readable, "error")) cat(sprintf("Could not render a print-friendly Circe definition: %s\n", conditionMessage(readable))) else {
     readable <- paste(as.character(readable), collapse = "")
+    approved_sets <- .studyAgentSlashPmcApprovedConceptSetPrintFriendly(artifact_dir, approval_path)
+    if (nzchar(approved_sets)) readable <- paste(readable, approved_sets, sep = "\n\n")
     readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
     if (identical(readable_action, "v")) cat(readable, "\n", sep = "")
     if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path, useBytes = TRUE); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }

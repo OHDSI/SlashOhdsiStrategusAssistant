@@ -608,7 +608,7 @@
   emitter_support <- composition$emitter_support %||% list()
   use_temporal <- FALSE
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed") && identical(emitter_support$status %||% "", "supported")) {
-    use_temporal <- tolower(prompt("Use the prepared exposure-followed-by-outcome relationship as a scope template? [y/N]: "))
+    use_temporal <- tolower(prompt("Use the proposed exposure-followed-by-outcome template? [y/N] (y = require the follow-on Condition within the selected post-exposure window; Enter/N = continue without that temporal requirement): "))
     if (is_back_signal(use_temporal)) return(use_temporal)
     if (use_temporal %in% c("y", "yes")) {
       if (!identical(domain, "Drug")) stop("The supported exposure-followed-by-outcome template requires a Drug index event.")
@@ -708,7 +708,7 @@
         cat(sprintf("Atlas-corrected concept-set policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact Atlas-corrected concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, corrected_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
       }
       if (identical(review_choice, "mapping") && !identical(atlas_mode, "required")) {
         chosen <- prompt(sprintf("Reviewed mapping CSV path [%s]: ", mapping_review$csv))
@@ -722,7 +722,7 @@
         cat(sprintf("Exact mapping-derived policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, converted$concept_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
       }
     }
   }
