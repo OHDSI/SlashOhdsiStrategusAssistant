@@ -63,11 +63,18 @@
       row <- domain_rows[i, , drop = FALSE]
       list(
         concept = list(
-          conceptId = suppressWarnings(as.integer(row$concept_id)),
-          conceptName = as.character(row$concept_name),
-          domainId = as.character(row$domain),
-          vocabularyId = as.character(row$vocabulary_id %||% ""),
-          standardConcept = "S"
+          CONCEPT_CLASS_ID = as.character(row$concept_class_id %||% ""),
+          CONCEPT_CODE = as.character(row$concept_code %||% ""),
+          CONCEPT_ID = suppressWarnings(as.integer(row$concept_id)),
+          CONCEPT_NAME = as.character(row$concept_name),
+          DOMAIN_ID = as.character(row$domain),
+          INVALID_REASON = if (nzchar(as.character(row$invalid_reason %||% ""))) as.character(row$invalid_reason) else NULL,
+          INVALID_REASON_CAPTION = as.character(row$invalid_reason_caption %||% "Valid"),
+          STANDARD_CONCEPT = as.character(row$standard_concept %||% "S"),
+          STANDARD_CONCEPT_CAPTION = as.character(row$standard_concept_caption %||% "Standard"),
+          VOCABULARY_ID = as.character(row$vocabulary_id %||% ""),
+          VALID_START_DATE = as.character(row$valid_start_date %||% ""),
+          VALID_END_DATE = as.character(row$valid_end_date %||% "")
         ),
         isExcluded = FALSE,
         includeDescendants = FALSE,
@@ -76,13 +83,7 @@
     })
     safe_domain <- gsub("[^A-Za-z0-9_-]+", "_", tolower(domain))
     path <- file.path(artifact_dir, paste0("atlas-mapping-review-", safe_domain, ".json"))
-    write_json(list(
-      name = paste0("Mapped source evidence: ", source_title, " (", domain, ")"),
-      description = "Unapproved StudyAgent mapping evidence. Review in Atlas; export corrected JSON and return it for explicit approval.",
-      expression = list(items = items),
-      source = "StudyAgent phenotype_code_mapping_evidence",
-      domain = domain
-    ), path)
+    write_json(list(items = items), path)
     paths <- c(paths, path)
   }
   paths
@@ -99,6 +100,13 @@
       concept_id = as.character(candidate$concept_id %||% ""),
       concept_name = as.character(candidate$concept_name %||% ""),
       domain = as.character(candidate$domain_id %||% ""),
+      concept_class_id = as.character((candidate$atlas_concept %||% list())$CONCEPT_CLASS_ID %||% ""),
+      concept_code = as.character((candidate$atlas_concept %||% list())$CONCEPT_CODE %||% ""),
+      invalid_reason = as.character((candidate$atlas_concept %||% list())$INVALID_REASON %||% ""),
+      invalid_reason_caption = as.character((candidate$atlas_concept %||% list())$INVALID_REASON_CAPTION %||% "Valid"),
+      standard_concept_caption = as.character((candidate$atlas_concept %||% list())$STANDARD_CONCEPT_CAPTION %||% "Standard"),
+      valid_start_date = as.character((candidate$atlas_concept %||% list())$VALID_START_DATE %||% ""),
+      valid_end_date = as.character((candidate$atlas_concept %||% list())$VALID_END_DATE %||% ""),
       vocabulary_id = as.character(candidate$vocabulary_id %||% ""),
       standard_concept = "S", standard_concept_status = as.character(candidate$mapping_method %||% "mapped_source_evidence"),
       assessment_status = paste0("mapping_evidence:", as.character(candidate$domain_policy_status %||% "expected_domain_required")),
