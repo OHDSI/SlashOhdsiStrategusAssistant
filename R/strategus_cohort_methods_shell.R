@@ -1815,6 +1815,8 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
   }
 
   write_json <- function(x, path) {
+    parent <- dirname(path)
+    if (!dir.exists(parent) && !dir.create(parent, recursive = TRUE, showWarnings = FALSE)) stop(sprintf("Could not create artifact directory: %s", parent))
     jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE, na = "null")
   }
 
@@ -2646,6 +2648,18 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
                                       exclude_metadata = NULL) {
     role_key <- tolower(role_label)
     recommendation_role <- tolower(trimws(as.character(recommendation_role %||% role_key)))
+    recommendation_context_path <- function(path) paste0(path, ".context.json")
+    cached_recommendation_matches_statement <- function(path) {
+      context_path <- recommendation_context_path(path)
+      if (!file.exists(path) || !file.exists(context_path)) return(FALSE)
+      context <- tryCatch(read_json(context_path), error = function(error) NULL)
+      identical(trimws(as.character(context$statement %||% "")), trimws(as.character(statement %||% ""))) &&
+        identical(as.character(context$role_key %||% ""), role_key)
+    }
+    write_recommendation <- function(response, path) {
+      write_json(response, path)
+      write_json(list(statement = statement, role_key = role_key, recommendation_role = recommendation_role), recommendation_context_path(path))
+    }
     preferred_selected_ids <- normalize_selected_ids(
       preferred_selected_ids,
       sprintf("%s cohort ID%s", role_label, if (isTRUE(allow_multiple)) "s" else ""),
@@ -2720,14 +2734,8 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     set_dialogue_context(
       paste0(role_key, "_recommendation"),
       recommendation_role,
-      context = list(
-        statement = statement,
-        top_k = top_k,
-        max_results = max_results,
-        candidate_limit = candidate_limit,
-        workflow_type = workflow_type,
-        exclude_metadata = exclude_metadata
-      )
+      context = list(statement = statement, top_k = top_k, max_results = max_results,
+        candidate_limit = candidate_limit, workflow_type = workflow_type, exclude_metadata = exclude_metadata)
     )
 
     recommendation_response <- NULL
@@ -2735,28 +2743,19 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     used_cached_recommendation <- FALSE
     used_window2 <- FALSE
     used_advice <- FALSE
-
-    if (maybe_use_cache(output_path, sprintf("%s recommendations", role_key))) {
+    cached_recommendation_ok <- cached_recommendation_matches_statement(output_path)
+    if (file.exists(output_path) && !cached_recommendation_ok) cat(sprintf("Saved %s recommendations belong to a different or older cohort statement; refreshing recommendations.\n", role_key))
+    if (cached_recommendation_ok && maybe_use_cache(output_path, sprintf("%s recommendations", role_key))) {
       recommendation_response <- read_json(output_path)
       used_cached_recommendation <- TRUE
     } else if (ensure_acp_ready(acpUrl)) {
-      body <- list(
-        study_intent = statement,
-        top_k = top_k,
-        max_results = max_results,
-        candidate_limit = candidate_limit,
-        recommendation_role = recommendation_role,
-        workflow_type = workflow_type,
-        exclude_metadata = exclude_metadata
-      )
+      body <- list(study_intent = statement, top_k = top_k, max_results = max_results,
+        candidate_limit = candidate_limit, recommendation_role = recommendation_role,
+        workflow_type = workflow_type, exclude_metadata = exclude_metadata)
       message(sprintf("Calling ACP flow: phenotype_recommendation (%s)", role_key))
-      recommendation_response <- tryCatch(
-        call_shell_acp_flow("phenotype_recommendation", body),
-        error = function(e) {
-          list(status = "error", error = conditionMessage(e))
-        }
-      )
-      write_json(recommendation_response, output_path)
+      recommendation_response <- tryCatch(call_shell_acp_flow("phenotype_recommendation", body),
+        error = function(e) list(status = "error", error = conditionMessage(e)))
+      write_recommendation(recommendation_response, output_path)
     }
 
     recommendations_core <- recommendation_response$recommendations %||% recommendation_response
@@ -2801,24 +2800,14 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         if (isTRUE(widen)) {
           used_window2 <- TRUE
           recommendation_path <- file.path(dirname(output_path), sprintf("%s_window2.json", tools::file_path_sans_ext(basename(output_path))))
-          body <- list(
-            study_intent = statement,
-            top_k = top_k,
-            max_results = max_results,
-            candidate_limit = candidate_limit,
-            candidate_offset = candidate_limit,
-            recommendation_role = recommendation_role,
-            workflow_type = workflow_type,
-            exclude_metadata = exclude_metadata
-          )
+          body <- list(study_intent = statement, top_k = top_k, max_results = max_results,
+            candidate_limit = candidate_limit, candidate_offset = candidate_limit,
+            recommendation_role = recommendation_role, workflow_type = workflow_type,
+            exclude_metadata = exclude_metadata)
           message(sprintf("Calling ACP flow: phenotype_recommendation (%s window 2)", role_key))
-          recommendation_response <- tryCatch(
-            call_shell_acp_flow("phenotype_recommendation", body),
-            error = function(e) {
-              list(status = "error", error = conditionMessage(e))
-            }
-          )
-          write_json(recommendation_response, recommendation_path)
+          recommendation_response <- tryCatch(call_shell_acp_flow("phenotype_recommendation", body),
+            error = function(e) list(status = "error", error = conditionMessage(e)))
+          write_recommendation(recommendation_response, recommendation_path)
           recommendations_core <- recommendation_response$recommendations %||% recommendation_response
           recommendations <- recommendations_core$phenotype_recommendations %||% list()
           cat(sprintf("\n== %s Phenotype Recommendations (window 2) ==\n", role_label))
@@ -2826,53 +2815,28 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
             rec <- recommendations[[i]]
             cat(sprintf("%d. %s (ID %s)\n", i, recommendation_name(rec), recommendation_id_label(rec)))
             if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
-            if (!isTRUE(recommendation_is_circe_computable(rec))) {
-              cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
-            }
+            if (!isTRUE(recommendation_is_circe_computable(rec))) cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
           }
           ok_any <- prompt_yesno(sprintf("Do any of these look like potential candidates for the %s?", role_key), default = TRUE)
         }
         if (!ok_any) {
           used_advice <- TRUE
           message(sprintf("Calling ACP flow: phenotype_recommendation_advice (%s)", role_key))
-          advice <- tryCatch(
-            call_shell_acp_flow("phenotype_recommendation_advice", list(study_intent = statement)),
-            error = function(e) {
-              list(status = "error", error = conditionMessage(e))
-            }
-          )
+          advice <- tryCatch(call_shell_acp_flow("phenotype_recommendation_advice", list(study_intent = statement)),
+            error = function(e) list(status = "error", error = conditionMessage(e)))
           advice_core <- advice$advice %||% advice
           cat("\n== Advisory guidance ==\n")
           cat(advice_core$advice %||% "", "\n")
-          if (length(advice_core$next_steps %||% list()) > 0) {
-            cat("Next steps:\n")
-            for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step))
-          }
-          if (length(advice_core$questions %||% list()) > 0) {
-            cat("Questions to clarify:\n")
-            for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
-          }
+          if (length(advice_core$next_steps %||% list()) > 0) { cat("Next steps:\n"); for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step)) }
+          if (length(advice_core$questions %||% list()) > 0) { cat("Questions to clarify:\n"); for (q in advice_core$questions) cat(sprintf("  - %s\n", q)) }
           checkpoint_label <- checkpoint_label_for_role_advice(role_label)
-          mark_checkpoint(checkpoint_label, list(
-            role_label = role_label,
-            role_key = role_key,
-            recommendations_path = recommendation_path,
-            statement = statement
-          ))
-          cat("\\nReturning to cohort-source selection. Choose create to build a review package and optionally review it in Atlas.\\n")
-          return(list(
-            action = "retry",
-            selected_ids = integer(0),
-            selected_source_ids = character(0),
-            selection_source = "none",
-            recommendation_path = json_string_or_null(if (file.exists(recommendation_path)) recommendation_path else NULL),
-            recommendation_source = "advice",
-            used_cached_recommendation = isTRUE(used_cached_recommendation),
-            used_cached_selection = FALSE,
-            used_window2 = isTRUE(used_window2),
-            used_advice = TRUE,
-            statement = statement
-          ))
+          mark_checkpoint(checkpoint_label, list(role_label = role_label, role_key = role_key,
+            recommendations_path = recommendation_path, statement = statement))
+          cat("\nReturning to cohort-source selection. Choose create to build a review package and optionally review it in Atlas.\n")
+          return(list(action = "retry", selected_ids = integer(0), selected_source_ids = character(0),
+            selection_source = "none", recommendation_path = json_string_or_null(if (file.exists(recommendation_path)) recommendation_path else NULL),
+            recommendation_source = "advice", used_cached_recommendation = isTRUE(used_cached_recommendation),
+            used_cached_selection = FALSE, used_window2 = isTRUE(used_window2), used_advice = TRUE, statement = statement))
         }
       }
     }

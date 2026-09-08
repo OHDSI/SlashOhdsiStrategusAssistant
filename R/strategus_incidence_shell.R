@@ -224,6 +224,8 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
   }
 
   write_json <- function(x, path) {
+    parent <- dirname(path)
+    if (!dir.exists(parent) && !dir.create(parent, recursive = TRUE, showWarnings = FALSE)) stop(sprintf("Could not create artifact directory: %s", parent))
     jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)
   }
 
@@ -490,6 +492,13 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   has_checkpoint <- function(label) {
     file.exists(checkpoint_path(label))
+  }
+
+  checkpoint_matches_statement <- function(label, statement) {
+    if (!has_checkpoint(label)) return(FALSE)
+    checkpoint <- tryCatch(read_json(checkpoint_path(label)), error = function(error) NULL)
+    saved <- trimws(as.character(checkpoint$role_statement %||% ""))
+    nzchar(saved) && identical(saved, trimws(as.character(statement %||% "")))
   }
 
   is_absolute_path <- function(path) {
@@ -1450,6 +1459,10 @@ Available exploration commands
       resume <- FALSE
     }
   }
+  if (isTRUE(resume) && !(file.exists(project_state_path) && file.exists(runtime_state_path)) && (has_checkpoint("target_advice") || has_checkpoint("outcome_advice"))) {
+    checkpoints <- c(if (has_checkpoint("target_advice")) "target advice" else NULL, if (has_checkpoint("outcome_advice")) "outcome advice" else NULL)
+    cat(sprintf("\nPre-build recovery note: saved %s checkpoint(s) were found. Only a confirmed concept-review session can resume in place; unconfirmed scope questions must be entered again. Saved recommendations are reused only when their cohort statement matches.\n", paste(checkpoints, collapse = ", ")))
+  }
 
   default_intent <- studyIntent %||% ""
   skip_intent_split_and_recommendation <- FALSE
@@ -1633,33 +1646,26 @@ Available exploration commands
       selected_ids_target <- as.character(imported_target_selection$selected_source_ids)
       selected_target_records <- imported_target_selection$records
       cat(sprintf(
-        "Imported target cohort %s from %s as source id %s.
-",
+        "Imported target cohort %s from %s as source id %s.\n",
         imported_target$metadata$cohort_name %||% "<unknown>",
         imported_target$metadata$source_schema %||% imported_target$metadata$source_path %||% imported_target$metadata$source_label %||% "<unknown>",
         imported_target$source_id %||% "<unknown>"
       ))
     } else {
-      do_target_recs <- !isTRUE(resume) || !has_checkpoint("target_advice")
-      if (interactive && !do_target_recs) {
-        cat("\n== Step 2: Target phenotype recommendations (resumed) ==\n")
-      }
+      target_advice_matches <- checkpoint_matches_statement("target_advice", target_statement)
+      force_target_recommendation_refresh <- isTRUE(resume) && has_checkpoint("target_advice") && !target_advice_matches
+      do_target_recs <- !isTRUE(resume) || !has_checkpoint("target_advice") || !target_advice_matches
+      if (isTRUE(force_target_recommendation_refresh)) cat("Saved target advice belongs to a different or older target statement; refreshing recommendations.\n")
+      if (interactive && !do_target_recs) cat("\n== Step 2: Target phenotype recommendations (resumed for the saved target statement) ==\n")
       if (do_target_recs) {
-        if (interactive) {
-          cat("\n== Step 2: Target phenotype recommendations ==\n")
-        }
+        if (interactive) cat("\n== Step 2: Target phenotype recommendations ==\n")
         set_dialogue_context("target_recommendation", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        if (maybe_use_cache(recs_target_path, "target recommendations")) {
+        if (!isTRUE(force_target_recommendation_refresh) && maybe_use_cache(recs_target_path, "target recommendations")) {
           rec_response_target <- read_json(recs_target_path)
           used_cached_recs_target <- TRUE
         } else {
           message("Calling ACP flow: phenotype_recommendation (target)")
-          body <- list(
-            study_intent = target_statement,
-            top_k = topK,
-            max_results = maxResults,
-            candidate_limit = candidateLimit
-          )
+          body <- list(study_intent = target_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
           rec_response_target <- acp_try("/flows/phenotype_recommendation", body, "target_recommendation")
           write_json(rec_response_target, recs_target_path)
         }
@@ -1667,14 +1673,8 @@ Available exploration commands
         rec_response_target <- read_json(recs_target_path)
         used_cached_recs_target <- TRUE
       } else {
-        do_target_recs <- TRUE
         message("No cached target recommendations found; rerunning target recommendations.")
-        body <- list(
-          study_intent = target_statement,
-          top_k = topK,
-          max_results = maxResults,
-          candidate_limit = candidateLimit
-        )
+        body <- list(study_intent = target_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
         rec_response_target <- acp_try("/flows/phenotype_recommendation", body, "target_recommendation_resume")
         write_json(rec_response_target, recs_target_path)
       }
@@ -1734,7 +1734,7 @@ Available exploration commands
               cat("Questions to clarify:\n")
               for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
             }
-            mark_checkpoint("target_advice", list(recommendations_path = recs_target_path))
+            mark_checkpoint("target_advice", list(recommendations_path = recs_target_path, role_statement = target_statement))
             next_action <- tolower(trimws(as.character(readline_with_navigation(
               "Next [rewrite=revise target statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
             ) %||% "")))
@@ -1950,33 +1950,22 @@ Available exploration commands
       if (!identical(imported_outcome_selection$action %||% "", "handled")) next
       selected_outcome_records <- imported_outcome_selection$records
       selected_ids_outcome <- as.character(imported_outcome_selection$selected_source_ids)
-      cat(sprintf(
-        "Imported %s outcome cohort definition(s) from %s.
-",
-        length(selected_ids_outcome),
-        outcome_source_mode
-      ))
+      cat(sprintf("Imported %s outcome cohort definition(s) from %s.\n", length(selected_ids_outcome), outcome_source_mode))
     } else {
-      do_outcome_recs <- !isTRUE(resume) || !has_checkpoint("outcome_advice")
-      if (interactive && !do_outcome_recs) {
-        cat("\n== Step 5: Outcome phenotype recommendations (resumed) ==\n")
-      }
+      outcome_advice_matches <- checkpoint_matches_statement("outcome_advice", outcome_statement)
+      force_outcome_recommendation_refresh <- isTRUE(resume) && has_checkpoint("outcome_advice") && !outcome_advice_matches
+      do_outcome_recs <- !isTRUE(resume) || !has_checkpoint("outcome_advice") || !outcome_advice_matches
+      if (isTRUE(force_outcome_recommendation_refresh)) cat("Saved outcome advice belongs to a different or older outcome statement; refreshing recommendations.\n")
+      if (interactive && !do_outcome_recs) cat("\n== Step 5: Outcome phenotype recommendations (resumed for the saved outcome statement) ==\n")
       if (do_outcome_recs) {
-        if (interactive) {
-          cat("\n== Step 5: Outcome phenotype recommendations ==\n")
-        }
+        if (interactive) cat("\n== Step 5: Outcome phenotype recommendations ==\n")
         set_dialogue_context("outcome_recommendation", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        if (maybe_use_cache(recs_outcome_path, "outcome recommendations")) {
+        if (!isTRUE(force_outcome_recommendation_refresh) && maybe_use_cache(recs_outcome_path, "outcome recommendations")) {
           rec_response_outcome <- read_json(recs_outcome_path)
           used_cached_recs_outcome <- TRUE
         } else {
           message("Calling ACP flow: phenotype_recommendation (outcome)")
-          body <- list(
-            study_intent = outcome_statement,
-            top_k = topK,
-            max_results = maxResults,
-            candidate_limit = candidateLimit
-          )
+          body <- list(study_intent = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
           rec_response_outcome <- acp_try("/flows/phenotype_recommendation", body, "outcome_recommendation")
           write_json(rec_response_outcome, recs_outcome_path)
         }
@@ -1984,14 +1973,8 @@ Available exploration commands
         rec_response_outcome <- read_json(recs_outcome_path)
         used_cached_recs_outcome <- TRUE
       } else {
-        do_outcome_recs <- TRUE
         message("No cached outcome recommendations found; rerunning outcome recommendations.")
-        body <- list(
-          study_intent = outcome_statement,
-          top_k = topK,
-          max_results = maxResults,
-          candidate_limit = candidateLimit
-        )
+        body <- list(study_intent = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
         rec_response_outcome <- acp_try("/flows/phenotype_recommendation", body, "outcome_recommendation_resume")
         write_json(rec_response_outcome, recs_outcome_path)
       }
@@ -1999,7 +1982,6 @@ Available exploration commands
       recs_core_outcome <- rec_response_outcome$recommendations %||% rec_response_outcome
       recommendations_outcome <- recs_core_outcome$phenotype_recommendations %||% list()
       if (length(recommendations_outcome) == 0) stop("No outcome phenotype recommendations returned.")
-
       cat("\n== Outcome Phenotype Recommendations ==\n")
       for (i in seq_along(recommendations_outcome)) {
         rec <- recommendations_outcome[[i]]
@@ -2036,25 +2018,16 @@ Available exploration commands
             advice_core <- advice$advice %||% advice
             cat("\n== Advisory guidance ==\n")
             cat(advice_core$advice %||% "", "\n")
-            if (length(advice_core$next_steps %||% list()) > 0) {
-              cat("Next steps:\n")
-              for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step))
-            }
-            if (length(advice_core$questions %||% list()) > 0) {
-              cat("Questions to clarify:\n")
-              for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
-            }
-            mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path))
+            if (length(advice_core$next_steps %||% list()) > 0) { cat("Next steps:\n"); for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step)) }
+            if (length(advice_core$questions %||% list()) > 0) { cat("Questions to clarify:\n"); for (q in advice_core$questions) cat(sprintf("  - %s\n", q)) }
+            mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path, role_statement = outcome_statement))
             next_action <- tolower(trimws(as.character(readline_with_navigation("Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: ") %||% "")))
             if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
             if (identical(next_action, "rewrite")) {
               revised_statement <- readline_with_navigation("Revised outcome cohort statement: ")
               if (is_back_signal(revised_statement)) next
               revised_statement <- trimws(as.character(revised_statement %||% ""))
-              if (nzchar(revised_statement)) {
-                outcome_statement <- revised_statement
-                recs_outcome_path <- file.path(output_dir, "recommendations_outcome_revised.json")
-              }
+              if (nzchar(revised_statement)) { outcome_statement <- revised_statement; recs_outcome_path <- file.path(output_dir, "recommendations_outcome_revised.json") }
               next
             }
             message("Returning to the cohort-source menu. Select create to build a review package and optionally review it in Atlas.")
