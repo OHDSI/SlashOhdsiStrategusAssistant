@@ -598,8 +598,6 @@
   if (is_back_signal(exit_strategy)) return(exit_strategy)
   if (!nzchar(exit_strategy)) exit_strategy <- "observation"
   if (!identical(exit_strategy, "observation")) stop("This guided path currently supports exit strategy observation only.")
-  supporting <- tolower(prompt("Require a supporting Condition occurrence around the index event? [y/N]: "))
-  if (is_back_signal(supporting)) return(supporting)
   criterion_domains <- setNames(list(domain), index_event)
   scope <- list(index_event = index_event, criterion_domains = criterion_domains, entry_limit = entry_limit,
                 prior_observation = prior_observation, index_day_boundary = "included", windows = "none",
@@ -608,12 +606,12 @@
   composition_path <- file.path(output_dir, "phenotype-conversion", tolower(role_label), "composition-seed.json")
   composition <- if (file.exists(composition_path)) tryCatch(jsonlite::read_json(composition_path, simplifyVector = FALSE), error = function(e) NULL) else NULL
   emitter_support <- composition$emitter_support %||% list()
+  use_temporal <- FALSE
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed") && identical(emitter_support$status %||% "", "supported")) {
     use_temporal <- tolower(prompt("Use the prepared exposure-followed-by-outcome relationship as a scope template? [y/N]: "))
     if (is_back_signal(use_temporal)) return(use_temporal)
     if (use_temporal %in% c("y", "yes")) {
       if (!identical(domain, "Drug")) stop("The supported exposure-followed-by-outcome template requires a Drug index event.")
-      if (supporting %in% c("y", "yes")) stop("Do not combine the supported temporal template with supporting-condition occurrence in this guided path.")
       outcome_term <- prompt("Follow-on Condition clinical term [Cough]: ")
       if (is_back_signal(outcome_term)) return(outcome_term)
       if (!nzchar(outcome_term)) outcome_term <- "Cough"
@@ -627,7 +625,13 @@
       scope$temporal_followup <- list(index_concept_set = index_event, trigger_concept_set = outcome_term,
         followup_days = followup_days, washout_days = washout_days)
       scope$exit_strategy <- list(type = "fixed", index = "startDate", offset_days = 1L)
+      cat("The temporal template defines the follow-on Condition; a separate supporting Condition is not requested.\n")
     }
+  }
+  supporting <- "no"
+  if (!use_temporal %in% c("y", "yes")) {
+    supporting <- tolower(prompt("Require a supporting Condition occurrence around the index event? [y/N]: "))
+    if (is_back_signal(supporting)) return(supporting)
   }
   if (supporting %in% c("y", "yes")) {
     supporting_term <- prompt("Supporting Condition clinical term: ")
