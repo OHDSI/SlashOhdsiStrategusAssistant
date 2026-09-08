@@ -582,6 +582,30 @@
                 prior_observation = prior_observation, index_day_boundary = "included", windows = "none",
                 exit_strategy = exit_strategy, visit_overlap = FALSE)
   if (nzchar(vocabulary)) scope$criterion_vocabularies <- setNames(list(list(vocabulary)), index_event)
+  composition_path <- file.path(output_dir, "phenotype-conversion", tolower(role_label), "composition-seed.json")
+  composition <- if (file.exists(composition_path)) tryCatch(jsonlite::read_json(composition_path, simplifyVector = FALSE), error = function(e) NULL) else NULL
+  emitter_support <- composition$emitter_support %||% list()
+  if (is.list(composition) && identical(composition$status %||% "", "unconfirmed") && identical(emitter_support$status %||% "", "supported")) {
+    use_temporal <- tolower(prompt("Use the prepared exposure-followed-by-outcome relationship as a scope template? [y/N]: "))
+    if (is_back_signal(use_temporal)) return(use_temporal)
+    if (use_temporal %in% c("y", "yes")) {
+      if (!identical(domain, "Drug")) stop("The supported exposure-followed-by-outcome template requires a Drug index event.")
+      if (supporting %in% c("y", "yes")) stop("Do not combine the supported temporal template with supporting-condition occurrence in this guided path.")
+      outcome_term <- prompt("Follow-on Condition clinical term [Cough]: ")
+      if (is_back_signal(outcome_term)) return(outcome_term)
+      if (!nzchar(outcome_term)) outcome_term <- "Cough"
+      followup_days <- suppressWarnings(as.integer(prompt("Maximum days after exposure for the follow-on Condition [30]: ")))
+      if (is.na(followup_days) || followup_days < 0L) stop("Follow-on window must be a non-negative integer.")
+      washout_raw <- prompt(sprintf("Clean-window days for exposure and outcome [%s]: ", prior_observation))
+      if (is_back_signal(washout_raw)) return(washout_raw)
+      washout_days <- if (!nzchar(washout_raw)) prior_observation else suppressWarnings(as.integer(washout_raw))
+      if (is.na(washout_days) || washout_days < 1L || washout_days != prior_observation) stop("Clean-window days must be at least 1 and equal the confirmed prior-observation days.")
+      scope$criterion_domains[[outcome_term]] <- "Condition"
+      scope$temporal_followup <- list(index_concept_set = index_event, trigger_concept_set = outcome_term,
+        followup_days = followup_days, washout_days = washout_days)
+      scope$exit_strategy <- list(type = "fixed", index = "startDate", offset_days = 1L)
+    }
+  }
   if (supporting %in% c("y", "yes")) {
     supporting_term <- prompt("Supporting Condition clinical term: ")
     if (is_back_signal(supporting_term)) return(supporting_term)
@@ -603,6 +627,74 @@
   if (!identical(approved_scope, "CONFIRM")) {
     cat("Scope was not confirmed; returning to cohort-source selection.\n")
     return(list(action = "retry"))
+  }
+  conversion_dir <- file.path(output_dir, "phenotype-conversion", tolower(role_label))
+  conversion_state_path <- file.path(conversion_dir, "conversion-state.json")
+  conversion_state <- if (file.exists(conversion_state_path)) tryCatch(jsonlite::read_json(conversion_state_path, simplifyVector = FALSE), error = function(e) NULL) else NULL
+  conversion_phenotype_id <- trimws(as.character(conversion_state$phenotype_id %||% ""))
+  confirmed_domains <- unique(as.character(unlist(scope$criterion_domains %||% list(), use.names = FALSE)))
+  confirmed_domains <- confirmed_domains[nzchar(confirmed_domains)]
+  if (nzchar(conversion_phenotype_id) && length(confirmed_domains)) {
+    refreshed_preparation <- .studyAgentSlashAcpPhenotypeConversionPrepare(
+      client = client, phenotype_id = conversion_phenotype_id,
+      recommendation_context = list(recommendation_role = tolower(role_label), workflow_type = "strategus"),
+      expected_domains = confirmed_domains, check_vocabulary_database = TRUE
+    )
+    if (identical(as.character(refreshed_preparation$status %||% ""), "ok")) {
+      write_json(refreshed_preparation$mapping_evidence %||% list(), file.path(conversion_dir, "mapping-evidence-confirmed-domains.json"))
+      write_json(refreshed_preparation$mapping_evidence %||% list(), file.path(conversion_dir, "mapping-evidence.json"))
+      cat(sprintf("Refreshed mapping evidence for confirmed OMOP domain(s): %s. No concepts were selected.\n", paste(confirmed_domains, collapse = ", ")))
+    } else {
+      cat("Could not refresh mapping evidence for the confirmed domain; continuing without inferred mapping eligibility.\n")
+    }
+  }
+  mapping_path <- file.path(conversion_dir, "mapping-evidence.json")
+  source_path <- file.path(conversion_dir, "source-snapshot.json")
+  if (file.exists(mapping_path) && file.exists(source_path)) {
+    mapping_evidence <- tryCatch(jsonlite::read_json(mapping_path, simplifyVector = FALSE), error = function(e) NULL)
+    source_snapshot <- tryCatch(jsonlite::read_json(source_path, simplifyVector = FALSE), error = function(e) NULL)
+    mapping_review <- .studyAgentSlashPmcWriteMappingEvidenceReview(mapping_evidence %||% list(),
+      as.character(source_snapshot$title %||% narrative), artifact_dir, write_json)
+    if (is.list(mapping_review)) {
+      cat(sprintf("%s mapped source-evidence candidate(s), including %s eligible for the confirmed domain, are available in %s. They are not selected.\n", mapping_review$candidate_count, mapping_review$eligible_candidate_count %||% 0L, mapping_review$csv))
+      atlas_exports <- as.character(mapping_review$atlas_exports %||% character(0))
+      atlas_mode <- as.character(mapping_review$atlas_recommendation %||% "optional")
+      if (length(atlas_exports)) cat(sprintf("Atlas import file(s): %s\n", paste(atlas_exports, collapse = ", ")))
+      if (identical(atlas_mode, "required")) {
+        cat("More than 500 mapping candidates were returned. Atlas review is required before mapped source evidence can be used.\n")
+        review_choice <- tolower(prompt("Concept review source [atlas=import in Atlas and return corrected JSON, search=run ACP vocabulary search]: "))
+      } else {
+        if (identical(atlas_mode, "strongly_recommended")) cat("More than 100 mapping candidates were returned. Atlas review is strongly recommended.\n")
+        review_choice <- tolower(prompt("Concept review source [mapping=review mapped CSV, atlas=import in Atlas and return corrected JSON, search=run ACP vocabulary search]: "))
+      }
+      if (is_back_signal(review_choice)) return(review_choice)
+      if (identical(review_choice, "atlas")) {
+        chosen <- prompt("Corrected Atlas concept-set JSON path: ")
+        if (is_back_signal(chosen)) return(chosen)
+        corrected_sets <- .studyAgentSlashPmcExternalSets(chosen, narrative)
+        approval_path <- file.path(artifact_dir, "mapping-concept-set-approval.json")
+        write_json(list(review_id = mapping_review$review_id, source = "atlas_corrected_export", atlas_import_path = chosen,
+          concept_sets = corrected_sets), approval_path)
+        cat(sprintf("Atlas-corrected concept-set policy saved to %s.\n", approval_path))
+        if (!identical(prompt("I explicitly approve this exact Atlas-corrected concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
+        return(.studyAgentSlashPmcEmit(client, narrative, scope, corrected_sets, artifact_dir,
+          imported_definition_dir, write_json, readline_with_navigation))
+      }
+      if (identical(review_choice, "mapping") && !identical(atlas_mode, "required")) {
+        chosen <- prompt(sprintf("Reviewed mapping CSV path [%s]: ", mapping_review$csv))
+        if (is_back_signal(chosen)) return(chosen)
+        if (!nzchar(chosen)) chosen <- mapping_review$csv
+        converted <- .studyAgentSlashPmcReviewCsv(chosen, mapping_review$manifest, mapping_review$review_id)
+        .studyAgentSlashPmcPrintPreview(converted$approval_preview)
+        approval_path <- file.path(artifact_dir, "mapping-concept-set-approval.json")
+        write_json(list(review_id = mapping_review$review_id, concept_sets = converted$concept_sets,
+          approval_preview = converted$approval_preview), approval_path)
+        cat(sprintf("Exact mapping-derived policy saved to %s.\n", approval_path))
+        if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
+        return(.studyAgentSlashPmcEmit(client, narrative, scope, converted$concept_sets, artifact_dir,
+          imported_definition_dir, write_json, readline_with_navigation))
+      }
+    }
   }
   write_json(list(narrative_statement = narrative, confirmed_scope = TRUE,
     concept_review_mode = "required", concept_build_mode = "search_only", review_delivery = "session",

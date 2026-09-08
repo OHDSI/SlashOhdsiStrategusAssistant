@@ -543,6 +543,46 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     .studyAgentSlashSelectionRecordFromImport(imported)
   }
 
+  prepare_recommended_phenotype <- function(rec, role_label) {
+    if (!is.null(.studyAgentSlashAcpRecommendationJson(rec))) {
+      imported <- .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir)
+      return(list(
+        action = "handled",
+        selected_source_ids = imported$source_id,
+        selected_ids = imported$cohort_definition_id,
+        records = list(imported$metadata)
+      ))
+    }
+
+    phenotype_id <- trimws(as.character(rec$phenotype_id %||% ""))
+    if (!nzchar(phenotype_id)) stop("Selected ACP recommendation has no stable phenotype_id.")
+    if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+
+    preparation <- .studyAgentSlashPreparePhenotypeConversion(
+      client = dialogue_acp_client$client,
+      phenotype_id = phenotype_id,
+      role_label = role_label,
+      output_dir = output_dir,
+      workflow_type = "incidence"
+    )
+    cat(sprintf(
+      "Prepared %s for review at %s. Continue through the review-gated create workflow.\\n",
+      rec$phenotype_name %||% phenotype_id,
+      preparation$artifact_dir %||% "phenotype-conversion"
+    ))
+    .studyAgentSlashCreateComputableRoleSelection(
+      role_label,
+      if (identical(role_label, "target")) target_statement else outcome_statement,
+      dialogue_acp_client$client,
+      output_dir,
+      imported_definition_dir,
+      interactive,
+      readline_with_navigation,
+      is_back_signal,
+      write_json
+    )
+  }
+
   seed_db_details_template <- function(path) {
     .studyAgentSlashSeedDbDetailsTemplate(path, write_json = write_json)
   }
@@ -1674,8 +1714,22 @@ Available exploration commands
               for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
             }
             mark_checkpoint("target_advice", list(recommendations_path = recs_target_path))
-            cat("\nHint: rerun with resume=TRUE after updating phenotypes to continue.\n")
-            stop("Stopping after target advice. Resume with resume=TRUE once phenotypes are updated.")
+            next_action <- tolower(trimws(as.character(readline_with_navigation(
+              "Next [rewrite=revise target statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
+            ) %||% "")))
+            if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
+            if (identical(next_action, "rewrite")) {
+              revised_statement <- readline_with_navigation("Revised target cohort statement: ")
+              if (is_back_signal(revised_statement)) next
+              revised_statement <- trimws(as.character(revised_statement %||% ""))
+              if (nzchar(revised_statement)) {
+                target_statement <- revised_statement
+                recs_target_path <- file.path(output_dir, "recommendations_target_revised.json")
+              }
+              next
+            }
+            message("Returning to the cohort-source menu. Select create to build a review package and optionally review it in Atlas.")
+            next
           }
         }
       }
@@ -1695,18 +1749,18 @@ Available exploration commands
       if (interactive) {
         labels <- vapply(seq_along(recommendations_target), function(i) {
           rec <- recommendations_target[[i]]
-          sprintf("%s (ID %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?")
+          sprintf("%s (ID %s; %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?", rec$computability_status %||% "status unknown")
         }, character(1))
         picks <- utils::select.list(labels, multiple = FALSE, title = "Select target phenotype")
-        if (nzchar(picks)) {
-          idx <- which(labels == picks)[1]
-          selected_ids_target <- recommendations_target[[idx]]$phenotype_id
-          selected_target_records <- list(selection_record_from_recommendation(recommendations_target[[idx]]))
-        }
+        if (!nzchar(picks)) next
+        selected_rec <- recommendations_target[[which(labels == picks)[1]]]
       } else {
-        selected_ids_target <- recommendations_target[[1]]$phenotype_id
-        selected_target_records <- list(selection_record_from_recommendation(recommendations_target[[1]]))
+        selected_rec <- recommendations_target[[1]]
       }
+      prepared_selection <- prepare_recommended_phenotype(selected_rec, "target")
+      if (!identical(prepared_selection$action %||% "", "handled")) next
+      selected_ids_target <- as.character(prepared_selection$selected_source_ids)
+      selected_target_records <- prepared_selection$records
     }
 
     if (length(selected_target_records) > 0) selected_ids_target <- vapply(selected_target_records, function(x) as.character(x$source_id %||% ""), character(1))
@@ -1980,8 +2034,22 @@ Available exploration commands
               for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
             }
             mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path))
-            cat("\nHint: rerun with resume=TRUE after updating phenotypes to continue.\n")
-            stop("Stopping after outcome advice. Resume with resume=TRUE once phenotypes are updated.")
+            next_action <- tolower(trimws(as.character(readline_with_navigation(
+              "Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
+            ) %||% "")))
+            if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
+            if (identical(next_action, "rewrite")) {
+              revised_statement <- readline_with_navigation("Revised outcome cohort statement: ")
+              if (is_back_signal(revised_statement)) next
+              revised_statement <- trimws(as.character(revised_statement %||% ""))
+              if (nzchar(revised_statement)) {
+                outcome_statement <- revised_statement
+                recs_outcome_path <- file.path(output_dir, "recommendations_outcome_revised.json")
+              }
+              next
+            }
+            message("Returning to the cohort-source menu. Select create to build a review package and optionally review it in Atlas.")
+            next
           }
         }
       }
@@ -2000,26 +2068,23 @@ Available exploration commands
       if (interactive) {
         labels <- vapply(seq_along(recommendations_outcome), function(i) {
           rec <- recommendations_outcome[[i]]
-          sprintf("%s (ID %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?")
+          sprintf("%s (ID %s; %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?", rec$computability_status %||% "status unknown")
         }, character(1))
         picks <- utils::select.list(labels, multiple = TRUE, title = "Select outcome phenotypes")
-        selected_ids_outcome <- vapply(picks, function(label) {
+        if (!length(picks)) next
+        selected_selections <- lapply(picks, function(label) {
           idx <- which(labels == label)[1]
-          recommendations_outcome[[idx]]$phenotype_id %||% NA_character_
-        }, character(1))
-        selected_outcome_records <- lapply(picks, function(label) {
-          idx <- which(labels == label)[1]
-          selection_record_from_recommendation(recommendations_outcome[[idx]])
+          prepare_recommended_phenotype(recommendations_outcome[[idx]], "outcome")
         })
       } else {
-        if (length(recommendations_outcome) >= 2) {
-          selected_ids_outcome <- vapply(recommendations_outcome[-1], function(r) r$phenotype_id %||% NA_character_, character(1))
-          selected_outcome_records <- lapply(recommendations_outcome[-1], selection_record_from_recommendation)
-        } else {
-          selected_ids_outcome <- vapply(recommendations_outcome, function(r) r$phenotype_id %||% NA_character_, character(1))
-          selected_outcome_records <- lapply(recommendations_outcome, selection_record_from_recommendation)
-        }
+        candidate_recommendations <- if (length(recommendations_outcome) >= 2) recommendations_outcome[-1] else recommendations_outcome
+        selected_selections <- lapply(candidate_recommendations, function(rec) {
+          prepare_recommended_phenotype(rec, "outcome")
+        })
       }
+      if (any(!vapply(selected_selections, function(selection) identical(selection$action %||% "", "handled"), logical(1)))) next
+      selected_ids_outcome <- unlist(lapply(selected_selections, function(selection) as.character(selection$selected_source_ids)), use.names = FALSE)
+      selected_outcome_records <- unlist(lapply(selected_selections, function(selection) selection$records), recursive = FALSE)
     }
 
     if (length(selected_outcome_records) > 0) selected_ids_outcome <- vapply(selected_outcome_records, function(x) as.character(x$source_id %||% ""), character(1))

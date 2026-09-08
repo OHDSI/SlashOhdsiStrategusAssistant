@@ -75,7 +75,19 @@ recommendations are not suitable. The shell calls the review-gated
 time. It saves the confirmed scope, ACP response, frozen candidate CSV, manifest, and
 `review-state.json` under `phenotype-make-computable/<role>/`.
 
+
+If a selected CIPHER phenotype was prepared for conversion and its recognized source
+codes were mapped against the configured OMOP vocabulary, `create` also offers a
+local `mapping-concept-review.csv`. This is a source-evidence alternative to ACP
+vocabulary search, not an imported concept set: the user edits only `review_*`
+columns, reviews the exact resulting policy, and must type `APPROVE`. Ambiguous,
+unmatched, or unavailable mappings must not be interpreted as selected concepts.
 Review can continue in the same shell by editing only the CSV `review_*` columns and
+
+For a prepared, supported exposure-to-outcome composition such as ACE inhibitor exposure
+followed by cough, `create` can offer an optional scope template. The user supplies and
+confirms the Drug index term, Condition outcome term, post-exposure window, and clean
+window; it does not reuse raw source codes or choose either concept set.
 returning its path, or by leaving the shell and later selecting `create` again to resume
 from those local artifacts. The shell converts the marked CSV to an exact policy object,
 displays it, saves an approval record, and requires `APPROVE` before emission. If ACP
@@ -85,3 +97,13 @@ downloaded package. Generated Capr source, Circe JSON, and technical validation 
 are also persisted. The shell saves local and ACP validation-environment reports, warns on major Capr/CirceR/SqlRender version mismatches, and can save `cohort-definition-readable.txt` from `CirceR::cohortPrintFriendly()`. Technical validation is not clinical validation.
 
 Vocabulary review begins with 20 candidates per lane. The shell displays returned and exact matched counts plus truncation, and can request a fresh complete session through 500 candidates. For broader sets it can request a 500-candidate slice, or users should narrow the search or review in Atlas.
+
+### Atlas review for large mapping packages
+
+When mapped source evidence contains more than 100 candidates, the shell writes
+an Atlas-compatible `expression.items` JSON export for each eligible OMOP domain
+and strongly recommends Atlas review. At more than 500 candidates, this Atlas
+handoff is required for mapped source evidence: import the generated JSON into
+Atlas, correct it there, export the corrected concept-set JSON, and provide that
+path to the shell. The corrected export still requires a locally saved approval
+record and explicit `APPROVE` before emission.

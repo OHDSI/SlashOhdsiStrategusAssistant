@@ -1,5 +1,16 @@
 # Agent Guide
 
+## ACP-Assisted Cohort Creation And Keeper State
+
+The incidence and cohort-method shells support a review-gated `create` acquisition path for target, comparator, and outcome cohorts. Keep the following behavior intact:
+
+- Narrative scope confirmation, candidate retrieval, CSV/manifest review, explicit policy approval, and Capr/Circe emission are separate gates. Do not make clinical or concept-policy choices on the user's behalf.
+- A candidate limit is a bounded retrieval slice. Required review sessions can request up to 500 candidates; large review packages should remain durable CSV/manifest artifacts rather than terminal dumps.
+- Preserve `outputs/phenotype-make-computable/`, `confirmed-scope.json`, review manifests, exact policy approvals, and generated Capr/Circe artifacts as resume state. A later session may need to continue review without ACP session memory.
+- Keeper concept-set preparation can precede cohort generation, but case review must wait for generated cohort rows. Profile extraction receives only the bounded per-lane input written to `keeper-case-review/rows/*_profile_input.json`; do not replace the full approved artifact.
+- Keeper adjudication requires a non-generic clinical phenotype label. Recover it from explicit role overrides, intent metadata, or saved study state; fail with a user-actionable request if no label exists. Archive earlier generic-label reviews before an intentional rerun.
+- ACP validation is technical validation, not clinical validation. The LLM sees only sanitized Keeper summaries; preserve this fail-closed boundary.
+
 ## R and HADES environment
 
 This package is tested against a working HADES installation made available through the

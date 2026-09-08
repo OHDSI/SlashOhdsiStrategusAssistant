@@ -2536,42 +2536,72 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     .studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body)
   }
 
-  collect_recommendation_selection <- function(recommendations, role_label, allow_multiple = FALSE) {
-    if (length(recommendations) == 0) return(integer(0))
+  collect_recommendation_selection <- function(recommendations, role_label, statement, workflow_type, allow_multiple = FALSE) {
+    empty_selection <- function(action = "retry") list(
+      action = action,
+      imported = list(),
+      selected_ids = integer(0),
+      selected_source_ids = character(0)
+    )
+    if (length(recommendations) == 0) return(empty_selection())
+
     if (!isTRUE(interactive)) {
-      unsupported <- vapply(recommendations, function(rec) !isTRUE(recommendation_is_circe_computable(rec)), logical(1))
-      if (any(unsupported)) {
-        stop(unsupported_recommendation_message(recommendations[[which(unsupported)[1]]], role_label))
-      }
-      if (isTRUE(allow_multiple)) {
-        return(as.integer(vapply(recommendations, recommendation_cohort_id, integer(1))))
-      }
-      return(as.integer(recommendation_cohort_id(recommendations[[1]])))
+      selected_recs <- if (isTRUE(allow_multiple)) recommendations else list(recommendations[[1]])
+      unsupported <- vapply(selected_recs, function(rec) !isTRUE(recommendation_is_circe_computable(rec)), logical(1))
+      if (any(unsupported)) stop(unsupported_recommendation_message(selected_recs[[which(unsupported)[1]]], role_label))
+    } else {
+      labels <- vapply(seq_along(recommendations), function(i) {
+        rec <- recommendations[[i]]
+        sprintf("%s (ID %s; %s)", recommendation_name(rec), recommendation_id_label(rec), rec$computability_status %||% "status unknown")
+      }, character(1))
+      picks <- utils::select.list(
+        labels,
+        multiple = isTRUE(allow_multiple),
+        title = sprintf("Select %s phenotype%s", tolower(role_label), if (isTRUE(allow_multiple)) "s" else "")
+      )
+      if (!length(picks) || !any(nzchar(picks))) return(empty_selection())
+      selected_recs <- lapply(picks, function(label) recommendations[[which(labels == label)[1]]])
     }
 
-    labels <- vapply(seq_along(recommendations), function(i) {
-      rec <- recommendations[[i]]
-      sprintf("%s (ID %s)", recommendation_name(rec), recommendation_id_label(rec))
-    }, character(1))
-    picks <- utils::select.list(
-      labels,
-      multiple = isTRUE(allow_multiple),
-      title = sprintf("Select %s phenotype%s", tolower(role_label), if (isTRUE(allow_multiple)) "s" else "")
-    )
-    if (!length(picks) || !any(nzchar(picks))) return(integer(0))
-    selected_recs <- lapply(picks, function(label) {
-      idx <- which(labels == label)[1]
-      recommendations[[idx]]
+    selection_results <- lapply(selected_recs, function(selected) {
+      if (isTRUE(recommendation_is_circe_computable(selected))) {
+        return(list(action = "handled", imported = list(
+          .studyAgentSlashImportAcpCohortDefinition(selected, imported_definition_dir)
+        )))
+      }
+      phenotype_id <- recommendation_identifier(selected)
+      if (!nzchar(phenotype_id)) stop(unsupported_recommendation_message(selected, role_label))
+      if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+      preparation <- .studyAgentSlashPreparePhenotypeConversion(
+        client = dialogue_acp_client$client,
+        phenotype_id = phenotype_id,
+        role_label = role_label,
+        output_dir = output_dir,
+        workflow_type = workflow_type
+      )
+      cat(sprintf("Prepared %s for review at %s. Continue through the review-gated create workflow.\\n",
+        recommendation_name(selected), preparation$artifact_dir %||% "phenotype-conversion"))
+      .studyAgentSlashCreateComputableRoleSelection(
+        role_label,
+        statement,
+        dialogue_acp_client$client,
+        output_dir,
+        imported_definition_dir,
+        interactive,
+        readline_with_navigation,
+        is_back_signal,
+        write_json
+      )
     })
-    unsupported <- vapply(selected_recs, function(rec) !isTRUE(recommendation_is_circe_computable(rec)), logical(1))
-    if (any(unsupported)) {
-      stop(unsupported_recommendation_message(selected_recs[[which(unsupported)[1]]], role_label))
-    }
-    selected_ids <- vapply(picks, function(label) {
-      idx <- which(labels == label)[1]
-      recommendation_cohort_id(recommendations[[idx]])
-    }, numeric(1))
-    as.integer(selected_ids[!is.na(selected_ids)])
+    if (any(!vapply(selection_results, function(result) is.list(result) && identical(result$action %||% "", "handled"), logical(1)))) return(empty_selection())
+
+    imported <- unlist(lapply(selection_results, function(result) result$imported %||% list()), recursive = FALSE)
+    list(
+      action = "handled",
+      imported = imported,
+      selected_ids = as.integer(vapply(imported, function(item) item$cohort_definition_id, integer(1))),
+      selected_source_ids = as.character(vapply(imported, function(item) item$source_id %||% "", character(1)))
+    )
   }
 
   run_role_recommendation <- function(role_label,
@@ -2806,26 +2836,33 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
             recommendations_path = recommendation_path,
             statement = statement
           ))
-          cat("\nHint: rerun with resume=TRUE after updating phenotypes to continue.\n")
-          stop(sprintf(
-            "Stopping after %s advice. Resume with resume=TRUE once phenotypes are updated.",
-            role_key
+          cat("\\nReturning to cohort-source selection. Choose create to build a review package and optionally review it in Atlas.\\n")
+          return(list(
+            action = "retry",
+            selected_ids = integer(0),
+            selected_source_ids = character(0),
+            selection_source = "none",
+            recommendation_path = json_string_or_null(if (file.exists(recommendation_path)) recommendation_path else NULL),
+            recommendation_source = "advice",
+            used_cached_recommendation = isTRUE(used_cached_recommendation),
+            used_cached_selection = FALSE,
+            used_window2 = isTRUE(used_window2),
+            used_advice = TRUE,
+            statement = statement
           ))
         }
       }
     }
 
-    selected_ids <- collect_recommendation_selection(recommendations, role_label, allow_multiple = allow_multiple)
-    selected_ids <- as.integer(unique(selected_ids[!is.na(selected_ids)]))
-    selected_recommendations <- lapply(selected_ids, function(selected_id) {
-      matches <- Filter(function(rec) identical(recommendation_cohort_id(rec), selected_id), recommendations)
-      if (length(matches) != 1L) {
-        stop(sprintf("Selected %s cohort ID %s matched %s ACP recommendations; selection is ambiguous.", role_label, selected_id, length(matches)))
-      }
-      matches[[1]]
-    })
-    imported_recommendations <- lapply(selected_recommendations, function(rec) .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir))
-    selected_source_ids <- vapply(imported_recommendations, function(item) as.character(item$source_id), character(1))
+    selection <- collect_recommendation_selection(
+      recommendations,
+      role_label,
+      statement = statement,
+      workflow_type = workflow_type,
+      allow_multiple = allow_multiple
+    )
+    selected_ids <- as.integer(unique(selection$selected_ids[!is.na(selection$selected_ids)]))
+    selected_source_ids <- as.character(selection$selected_source_ids %||% character(0))
 
     list(
       selected_ids = selected_ids,
@@ -5283,6 +5320,7 @@ Available exploration commands
   }
   }
 
+  if (identical(target_rec$action %||% "", "retry")) next
   targetCohortId <- resolve_single_selection(
     selected_ids = target_rec$selected_ids,
     fallback_value = if (isTRUE(should_force_role_reselection("target"))) NULL else targetCohortId %||% cached_inputs$target_cohort_id,
@@ -5455,6 +5493,7 @@ Available exploration commands
   }
   }
 
+  if (identical(comparator_rec$action %||% "", "retry")) next
   comparatorCohortId <- resolve_single_selection(
     selected_ids = comparator_rec$selected_ids,
     fallback_value = if (isTRUE(should_force_role_reselection("comparator"))) NULL else comparatorCohortId %||% cached_inputs$comparator_cohort_id,
@@ -5631,6 +5670,7 @@ Available exploration commands
   }
   }
 
+  if (any(vapply(outcome_recs, function(rec) identical(rec$action %||% "", "retry"), logical(1)))) next
   outcome_recommendations <- lapply(seq_along(outcome_recs), function(i) {
     rec <- outcome_recs[[i]]
     list(

@@ -31,6 +31,11 @@
     if ((inc_d || inc_m) && !inc) stop(sprintf("CSV row %s has inclusion policy marks without review_include_concept.", i))
     if ((exc_d || exc_m) && !exc) stop(sprintf("CSV row %s has exclusion policy marks without review_exclude_concepts.", i))
     if (!inc && !exc) next
+    if (identical(as.character(manifest$source %||% ""), "phenotype_code_mapping_evidence")) {
+      eligible_keys <- as.character(unlist(manifest$eligible_candidate_keys %||% character(0), use.names = FALSE))
+      candidate_key <- paste(as.character(row$concept_id), trimws(as.character(row$domain)), sep = "|")
+      if ((inc || exc) && !candidate_key %in% eligible_keys) stop(sprintf("CSV row %s is not eligible for the confirmed-domain mapping review.", i))
+    }
     id <- suppressWarnings(as.integer(row$concept_id)); name <- trimws(as.character(row$concept_set_name)); domain <- trimws(as.character(row$domain))
     if (is.na(id) || id <= 0L || !nzchar(name) || !nzchar(domain)) stop(sprintf("CSV row %s has invalid frozen concept-set name, domain, or id.", i))
     key <- paste(name, domain, sep = "\r")
@@ -47,17 +52,100 @@
   list(concept_sets = sets, approval_preview = preview)
 }
 
+
+.studyAgentSlashPmcWriteAtlasMappingExports <- function(rows, source_title, artifact_dir, write_json) {
+  eligible <- rows[rows$precision_eligible == "TRUE", , drop = FALSE]
+  if (!nrow(eligible)) return(character(0))
+  paths <- character(0)
+  for (domain in unique(eligible$domain)) {
+    domain_rows <- eligible[eligible$domain == domain, , drop = FALSE]
+    items <- lapply(seq_len(nrow(domain_rows)), function(i) {
+      row <- domain_rows[i, , drop = FALSE]
+      list(
+        concept = list(
+          conceptId = suppressWarnings(as.integer(row$concept_id)),
+          conceptName = as.character(row$concept_name),
+          domainId = as.character(row$domain),
+          vocabularyId = as.character(row$vocabulary_id %||% ""),
+          standardConcept = "S"
+        ),
+        isExcluded = FALSE,
+        includeDescendants = FALSE,
+        includeMapped = FALSE
+      )
+    })
+    safe_domain <- gsub("[^A-Za-z0-9_-]+", "_", tolower(domain))
+    path <- file.path(artifact_dir, paste0("atlas-mapping-review-", safe_domain, ".json"))
+    write_json(list(
+      name = paste0("Mapped source evidence: ", source_title, " (", domain, ")"),
+      description = "Unapproved StudyAgent mapping evidence. Review in Atlas; export corrected JSON and return it for explicit approval.",
+      expression = list(items = items),
+      source = "StudyAgent phenotype_code_mapping_evidence",
+      domain = domain
+    ), path)
+    paths <- c(paths, path)
+  }
+  paths
+}
+
+.studyAgentSlashPmcWriteMappingEvidenceReview <- function(mapping_evidence, source_title, artifact_dir, write_json) {
+  if (!identical(as.character(mapping_evidence$status %||% ""), "ok")) return(NULL)
+  results <- mapping_evidence$code_results %||% list()
+  rows <- unlist(lapply(results, function(result) {
+    candidates <- result$standard_candidates %||% list()
+    if (!identical(result$status %||% "", "mapped") && !identical(result$status %||% "", "ambiguous_mapping")) return(list())
+    lapply(candidates, function(candidate) data.frame(
+      concept_set_name = paste0("Mapped source evidence: ", source_title),
+      concept_id = as.character(candidate$concept_id %||% ""),
+      concept_name = as.character(candidate$concept_name %||% ""),
+      domain = as.character(candidate$domain_id %||% ""),
+      vocabulary_id = as.character(candidate$vocabulary_id %||% ""),
+      standard_concept = "S", standard_concept_status = as.character(candidate$mapping_method %||% "mapped_source_evidence"),
+      assessment_status = paste0("mapping_evidence:", as.character(candidate$domain_policy_status %||% "expected_domain_required")),
+      precision_eligible = if (identical(as.character(candidate$domain_policy_status %||% ""), "eligible_for_review")) "TRUE" else "FALSE",
+      relationship_evidence = sprintf("%s from %s:%s", as.character(candidate$mapping_method %||% "Maps to"), result$source_vocabulary_id %||% "", result$source_code %||% ""),
+      review_include_concept = "", review_include_descendants = "", review_include_mapped = "",
+      review_exclude_concepts = "", review_exclude_descendants = "", review_exclude_mapped = "",
+      stringsAsFactors = FALSE
+    ))
+  }), recursive = FALSE)
+  if (!length(rows)) return(NULL)
+  rows <- do.call(rbind, rows)
+  rows <- rows[!is.na(rows$concept_id) & nzchar(rows$concept_id) & nzchar(rows$domain), , drop = FALSE]
+  if (!nrow(rows)) return(NULL)
+  rows <- rows[!duplicated(rows[, c("concept_id", "domain")]), , drop = FALSE]
+  eligible_rows <- rows$precision_eligible == "TRUE"
+  eligible_rows[is.na(eligible_rows)] <- FALSE
+  eligible_keys <- unique(paste(rows$concept_id[eligible_rows], rows$domain[eligible_rows], sep = "|"))
+  if (!length(eligible_keys)) return(NULL)
+  review_id <- paste0("mapping-", as.integer(Sys.time()))
+  csv <- file.path(artifact_dir, "mapping-concept-review.csv")
+  manifest <- file.path(artifact_dir, "mapping-concept-review-manifest.json")
+  utils::write.csv(rows, csv, row.names = FALSE, na = "")
+  atlas_exports <- .studyAgentSlashPmcWriteAtlasMappingExports(rows, source_title, artifact_dir, write_json)
+  write_json(list(
+    schema_version = 1L,
+    review_id = review_id,
+    source = "phenotype_code_mapping_evidence",
+    selection_guardrail = "Rows are unapproved mapping evidence. Only confirmed-domain eligible rows may be selected; edit only review_* columns and explicitly approve an exact policy before emission.",
+    eligible_candidate_keys = eligible_keys,
+    atlas_exports = atlas_exports,
+    atlas_recommendation = if (nrow(rows) > 500L) "required" else if (nrow(rows) > 100L) "strongly_recommended" else "optional"
+  ), manifest)
+  list(review_id = review_id, csv = csv, manifest = manifest, candidate_count = nrow(rows), eligible_candidate_count = length(eligible_keys), atlas_exports = atlas_exports, atlas_recommendation = if (nrow(rows) > 500L) "required" else if (nrow(rows) > 100L) "strongly_recommended" else "optional")
+}
+
 .studyAgentSlashPmcExternalSets <- function(path, fallback_name) {
   if (!file.exists(path)) stop(sprintf("Concept-set JSON was not found: %s", path))
   value <- jsonlite::read_json(path, simplifyVector = FALSE)
   direct <- value$concept_sets %||% NULL
   if (is.list(direct) && length(direct)) return(direct)
-  if (is.list(value) && length(value) && !is.null(value[[1]]$items)) return(value)
-  atlas <- value$items %||% NULL
-  if (!is.list(atlas) || !length(atlas)) stop("JSON must contain ACP concept_sets or an Atlas items array.")
+  if (is.list(value) && length(value) && is.list(value[[1]]) && !is.null(value[[1]]$items)) return(value)
+  atlas <- value$items %||% value$expression$items %||% NULL
+  if (!is.list(atlas) || !length(atlas)) stop("JSON must contain ACP concept_sets, a bare Atlas items array, or an Atlas expression.items array.")
   items <- lapply(atlas, function(x) {
-    concept <- x$concept %||% list(); id <- suppressWarnings(as.integer(x$concept_id %||% x$conceptId %||% concept$CONCEPT_ID))
-    domain <- as.character(x$domain %||% concept$DOMAIN_ID %||% "")
+    concept <- x$concept %||% list(); id <- suppressWarnings(as.integer(x$concept_id %||% x$conceptId %||% concept$CONCEPT_ID %||% concept$conceptId))
+    domain <- as.character(x$domain %||% concept$DOMAIN_ID %||% concept$domainId %||% "")
     if (is.na(id) || id <= 0L || !nzchar(domain)) stop("Every Atlas item needs a concept id and domain.")
     list(concept_id = id, domain = domain, include_descendants = isTRUE(x$includeDescendants %||% FALSE),
       include_mapped = isTRUE(x$includeMapped %||% FALSE), is_excluded = isTRUE(x$isExcluded %||% FALSE))
@@ -98,6 +186,25 @@
     warnings = if (length(issues)) lapply(issues, function(x) sprintf("%s server=%s local=%s", x$package, x$server_version, x$local_version)) else list())
 }
 
+.studyAgentSlashPmcConversionProvenance <- function(artifact_dir) {
+  output_dir <- dirname(dirname(artifact_dir))
+  role_dir <- basename(artifact_dir)
+  conversion_dir <- file.path(output_dir, "phenotype-conversion", role_dir)
+  snapshot_path <- file.path(conversion_dir, "source-snapshot.json")
+  if (!file.exists(snapshot_path)) return(NULL)
+  snapshot <- tryCatch(jsonlite::read_json(snapshot_path, simplifyVector = FALSE), error = function(e) NULL)
+  if (!is.list(snapshot)) return(NULL)
+  composition_path <- file.path(conversion_dir, "composition-seed.json")
+  mapping_path <- file.path(conversion_dir, "mapping-evidence.json")
+  composition <- if (file.exists(composition_path)) tryCatch(jsonlite::read_json(composition_path, simplifyVector = FALSE), error = function(e) NULL) else NULL
+  mapping <- if (file.exists(mapping_path)) tryCatch(jsonlite::read_json(mapping_path, simplifyVector = FALSE), error = function(e) NULL) else NULL
+  list(source_phenotype_id = snapshot$phenotype_id %||% "", source_title = snapshot$title %||% "",
+    source_revision = snapshot$source_revision %||% "", source_payload_sha256 = snapshot$source_payload_sha256 %||% "",
+    composition_type = composition$composition_type %||% NULL,
+    mapping_evidence_status = mapping$status %||% NULL,
+    conversion_artifact_dir = conversion_dir)
+}
+
 .studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline) {
   emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = TRUE,
     scope = scope, concept_review_mode = "provided_only", concept_sets = concept_sets)
@@ -105,6 +212,8 @@
   if (!identical(emitted$status %||% "", "ok")) { cat(sprintf("ACP did not emit a definition (%s); review state is preserved in %s.\n", emitted$status %||% "unknown", artifact_dir)); return(list(action = "retry")) }
   validation <- emitted$validation %||% list(); server_environment <- validation$r_environment %||% list()
   local_environment <- .studyAgentSlashPmcLocalValidationEnvironment()
+  conversion_provenance <- .studyAgentSlashPmcConversionProvenance(artifact_dir)
+  if (!is.null(conversion_provenance)) write_json(conversion_provenance, file.path(artifact_dir, "conversion-provenance.json"))
   comparison <- .studyAgentSlashPmcCompareValidationEnvironment(server_environment, local_environment)
   write_json(local_environment, file.path(artifact_dir, "local-validation-environment.json"))
   write_json(comparison, file.path(artifact_dir, "validation-environment-comparison.json"))
@@ -124,6 +233,7 @@
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
     justification = "Created through the review-gated phenotype_make_computable ACP flow.", circe_json = cohort), imported_definition_dir)
   imported$metadata$source_type <- "phenotype_make_computable"; imported$metadata$source_label <- "ACP phenotype_make_computable"; imported$metadata$artifact_dir <- artifact_dir; imported$metadata$validation <- validation; imported$metadata$validation_environment_comparison <- comparison
+  imported$metadata$conversion_source_provenance <- conversion_provenance
   list(action = "handled", imported = list(imported), selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata))
 }
 
@@ -214,12 +324,67 @@
   cat(sprintf("- Index event: %s\n", scope$index_event %||% ""))
   for (name in names(scope$criterion_domains %||% list())) cat(sprintf("- Criterion: %s (%s)\n", name, scope$criterion_domains[[name]]))
   for (name in names(scope$criterion_vocabularies %||% list())) cat(sprintf("- Vocabulary restriction: %s = %s\n", name, paste(unlist(scope$criterion_vocabularies[[name]]), collapse = ", ")))
-  cat(sprintf("- Entry-event limit: %s\n- Prior observation: %s days\n- Index-day boundary: %s\n- Windows: %s\n- Exit strategy: %s\n- Visit overlap: %s\n",
-    scope$entry_limit %||% "", scope$prior_observation %||% "", scope$index_day_boundary %||% "", scope$windows %||% "",
-    if (is.list(scope$exit_strategy)) jsonlite::toJSON(scope$exit_strategy, auto_unbox = TRUE) else scope$exit_strategy %||% "", scope$visit_overlap %||% FALSE))
+  cat(sprintf("- Entry-event limit: %s\n- Prior observation: %s days\n- Index-day boundary: %s\n- Windows: %s\n- Exit strategy: %s\n- Visit overlap: %s\n", scope$entry_limit %||% "", scope$prior_observation %||% "", scope$index_day_boundary %||% "", scope$windows %||% "", if (is.list(scope$exit_strategy)) jsonlite::toJSON(scope$exit_strategy, auto_unbox = TRUE) else scope$exit_strategy %||% "", scope$visit_overlap %||% FALSE))
   if (is.list(scope$supporting_condition_occurrence)) {
     x <- scope$supporting_condition_occurrence
     cat(sprintf("- Supporting Condition: %s, %s to %s days relative to %s\n", x$concept_set %||% "", x$start_days %||% "", x$end_days %||% "", x$anchor %||% ""))
   }
   if (!is.null(scope$multi_domain_entry_policy)) cat(sprintf("- Multi-domain policy: %s\n", scope$multi_domain_entry_policy))
+}
+
+.studyAgentSlashPrintPhenotypePresentation <- function(preparation) {
+  presentation <- preparation$presentation %||% list(); readiness <- preparation$readiness %||% list()
+  cat(sprintf("\n%s\n", as.character(presentation$title %||% preparation$phenotype_id %||% "Phenotype candidate")))
+  cat(sprintf("Source: %s\n", as.character(presentation$source %||% "Unknown")))
+  cat(sprintf("Use path: %s\n", as.character(readiness$action_class %||% presentation$use_mode %||% "unknown")))
+  summary <- trimws(as.character(presentation$plain_language_summary %||% "")); if (nzchar(summary)) cat(sprintf("%s\n", summary))
+  gaps <- presentation$important_gaps %||% list(); if (length(gaps)) { cat("Needs review:\n"); for (gap in gaps) cat(sprintf("- %s\n", as.character(gap))) }
+  mapping <- preparation$mapping_evidence %||% list(); coverage <- mapping$coverage %||% list()
+  if (identical(mapping$status %||% "", "ok")) cat(sprintf("Mapping evidence: %s mapped, %s ambiguous, %s unmatched source code(s); review is required.\n", coverage$mapped_code_count %||% 0L, coverage$ambiguous_mapping_count %||% 0L, coverage$unmatched_source_code_count %||% 0L))
+  else if (identical(mapping$status %||% "", "unavailable")) cat("Mapping evidence: OMOP vocabulary lookup was unavailable; do not infer mapping coverage.\n")
+  else if (identical(mapping$status %||% "", "not_requested")) cat("Mapping evidence: OMOP vocabulary lookup was not requested; source codes remain review evidence only.\n")
+  composition <- preparation$composition_seed %||% NULL
+  if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {
+    cat("Proposed relationship (requires confirmation):\n"); for (component in composition$components %||% list()) cat(sprintf("- %s: %s\n", as.character(component$role %||% "component"), as.character(component$label %||% "")))
+    relationship <- composition$relationship %||% list(); cat(sprintf("- Relationship: %s (%s -> %s)\n", as.character(relationship$type %||% ""), as.character(relationship$anchor %||% ""), as.character(relationship$target %||% "")))
+    decisions <- composition$unresolved_decisions %||% list(); if (length(decisions)) { cat("You must decide:\n"); for (decision in decisions) cat(sprintf("- %s\n", as.character(decision))) }
+  }
+  for (group in preparation$component_recommendations %||% list()) {
+    candidates <- group$candidates %||% list()
+    if (length(candidates)) { cat(sprintf("Suggested phenotypes for %s (%s):\n", as.character(group$role %||% "component"), as.character(group$query %||% ""))); for (candidate in candidates) { card <- candidate$presentation %||% list(); cat(sprintf("- %s [%s; %s] %s\n", as.character(candidate$phenotype_name %||% candidate$phenotype_id %||% ""), as.character(candidate$phenotype_id %||% ""), as.character(candidate$computability_status %||% ""), as.character(card$plain_language_summary %||% candidate$short_description %||% ""))) } }
+    else if (identical(group$status %||% "", "no_candidates")) cat(sprintf("No indexed phenotype suggestions were returned for %s (%s); continue with the confirmed scope and concept review.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
+    else if (identical(group$status %||% "", "unavailable")) cat(sprintf("Follow-on phenotype search was unavailable for %s (%s); no substitute was selected.\n", as.character(group$role %||% "component"), as.character(group$query %||% "")))
+  }
+  invisible(preparation)
+}
+
+.studyAgentSlashPreparePhenotypeConversion <- function(client, phenotype_id, role_label,
+                                                        output_dir, workflow_type,
+                                                        check_vocabulary_database = TRUE,
+                                                        write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
+  phenotype_id <- trimws(as.character(phenotype_id %||% ""))
+  if (!nzchar(phenotype_id)) stop("Provide a non-empty phenotype_id.")
+  artifact_dir <- file.path(output_dir, "phenotype-conversion", tolower(role_label))
+  dir.create(artifact_dir, recursive = TRUE, showWarnings = FALSE)
+  preparation <- .studyAgentSlashAcpPhenotypeConversionPrepare(
+    client = client, phenotype_id = phenotype_id,
+    recommendation_context = list(recommendation_role = tolower(role_label), workflow_type = workflow_type),
+    check_vocabulary_database = check_vocabulary_database
+  )
+  if (!identical(as.character(preparation$status %||% ""), "ok")) stop("ACP could not prepare the selected phenotype for review.")
+  write_json(preparation, file.path(artifact_dir, "preparation-package.json"))
+  snapshot <- preparation$source_snapshot %||% list()
+  write_json(snapshot, file.path(artifact_dir, "source-snapshot.json"))
+  write_json(preparation$presentation %||% list(), file.path(artifact_dir, "presentation.json"))
+  write_json(preparation$readiness %||% list(), file.path(artifact_dir, "readiness.json"))
+  write_json(preparation$mapping_evidence %||% list(), file.path(artifact_dir, "mapping-evidence.json"))
+  write_json(preparation$composition_seed %||% list(), file.path(artifact_dir, "composition-seed.json"))
+  write_json(preparation$component_recommendations %||% list(), file.path(artifact_dir, "component-recommendations.json"))
+  write_json(list(schema_version = 1L, phenotype_id = phenotype_id, role_label = role_label,
+    workflow_type = workflow_type, next_action = preparation$next_action %||% "",
+    source_payload_sha256 = snapshot$source_payload_sha256 %||% ""),
+    file.path(artifact_dir, "conversion-state.json"))
+  .studyAgentSlashPrintPhenotypePresentation(preparation)
+  preparation$artifact_dir <- artifact_dir
+  preparation
 }
