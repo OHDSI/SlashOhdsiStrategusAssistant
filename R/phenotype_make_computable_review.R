@@ -285,9 +285,12 @@
 }
 
 .studyAgentSlashPmcReviewHandoff <- function(role_label, narrative, scope, review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = TRUE) {
-  prompt <- function(text) { x <- trimws(as.character(readline_with_navigation(text) %||% "")); if (is_back_signal(x)) return(x); sub("^['\\\"](.*)['\\\"]$", "\\1", x) }
-  if (!identical(review$status %||% "", "needs_concept_review")) { cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir)); return(list(action = "retry")) }
+  is_back <- function(x) {
+    is_back_signal(x) || tolower(trimws(as.character(x %||% ""))) %in% c("back", "/back")
+  }
+  prompt <- function(text) { x <- trimws(as.character(readline_with_navigation(text) %||% "")); if (is_back(x)) return("/back"); sub("^['\\\"](.*)['\\\"]$", "\\1", x) }
   urls <- review$review_urls %||% list(); csv <- file.path(artifact_dir, "concept-review.csv"); manifest <- file.path(artifact_dir, "concept-review-manifest.json")
+  if (!identical(review$status %||% "", "needs_concept_review")) { cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir)); return(list(action = "retry")) }
   download_review <- function() {
     if (!isTRUE(download)) return(invisible(NULL))
     if (nzchar(as.character(urls$candidates_csv %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$candidates_csv, csv)
@@ -307,7 +310,7 @@
   }
   action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
   action <- tolower(prompt(action_prompt))
-  if (is_back_signal(action)) return(action)
+  if (is_back(action)) return(list(action = "retry"))
   request_expansion <- (identical(action, "full") && max_exact > 0L && max_exact <= 500L) || (identical(action, "max500") && max_exact > 500L)
   if (request_expansion) {
     requested_limit <- if (identical(action, "full")) max_exact else 500L
@@ -327,10 +330,10 @@
   if (identical(action, "csv") && !zero) {
     if (as.integer(review$candidate_count %||% 0L) > 500L && !identical(prompt("This CSV has more than 500 candidates; Atlas is recommended. Download anyway [type DOWNLOAD]: "), "DOWNLOAD")) return(list(action = "retry"))
     download_review()
-    chosen <- prompt(sprintf("Reviewed CSV path [%s]: ", csv)); if (is_back_signal(chosen)) return(chosen); if (!nzchar(chosen)) chosen <- csv
+    chosen <- prompt(sprintf("Reviewed CSV path [%s; /back returns to cohort-source selection]: ", csv)); if (is_back(chosen)) return(list(action = "retry")); if (!nzchar(chosen)) chosen <- csv
     converted <- .studyAgentSlashPmcReviewCsv(chosen, manifest, review$review_id %||% ""); sets <- converted$concept_sets; preview <- converted$approval_preview
   } else if (identical(action, "json")) {
-    chosen <- prompt("Atlas or ACP concept-set JSON path: "); if (is_back_signal(chosen)) return(chosen); sets <- .studyAgentSlashPmcExternalSets(chosen, narrative)
+    chosen <- prompt("Atlas or ACP concept-set JSON path [/back returns to cohort-source selection]: "); if (is_back(chosen)) return(list(action = "retry")); sets <- .studyAgentSlashPmcExternalSets(chosen, narrative)
     preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(concept_set_name = set$name, concept_id = item$concept_id, concept_name = "external JSON", domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
   } else return(list(action = "retry"))
   .studyAgentSlashPmcPrintPreview(preview); approval_path <- file.path(artifact_dir, "concept-set-approval.json")
@@ -417,6 +420,11 @@
     cat("Mapping evidence: OMOP vocabulary lookup was unavailable; do not infer mapping coverage.\n")
   } else if (identical(mapping$status %||% "", "not_requested")) {
     cat("Mapping evidence: OMOP vocabulary lookup was not requested; source codes remain review evidence only.\n")
+  }
+  unavailable_systems <- Filter(function(x) identical(as.character(x$mapping_support %||% ""), "unavailable"), readiness$code_systems %||% list())
+  if (length(unavailable_systems)) {
+    labels <- vapply(unavailable_systems, function(x) as.character(x$source_system %||% x$system_name %||% "source terminology"), character(1))
+    cat(sprintf("Source terminology unavailable locally: %s; its source codes were not mapped.\n", paste(unique(labels), collapse = ", ")))
   }
   composition <- preparation$composition_seed %||% NULL
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {
@@ -506,5 +514,7 @@
     file.path(artifact_dir, "conversion-state.json"))
   if (isTRUE(display)) .studyAgentSlashPrintPhenotypePresentation(preparation)
   preparation$artifact_dir <- artifact_dir
+  source_payload <- snapshot$source_payload %||% NULL
+  if (is.list(source_payload) && length(source_payload)) write_json(source_payload, file.path(artifact_dir, "source-definition.json"))
   preparation
 }

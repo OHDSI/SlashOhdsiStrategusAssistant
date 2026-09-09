@@ -555,62 +555,56 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
   prepare_recommended_phenotype <- function(rec, role_label) {
     phenotype_id <- trimws(as.character(rec$phenotype_id %||% ""))
     if (!nzchar(phenotype_id)) stop("Selected ACP recommendation has no stable phenotype_id.")
-
+    preparation <- NULL
+    import_prepared_source <- function(preparation) {
+      source <- (preparation$source_snapshot %||% list())$source_payload %||% NULL
+      source_rec <- list(
+        phenotype_id = phenotype_id,
+        phenotype_name = as.character((preparation$presentation %||% list())$title %||% rec$phenotype_name %||% phenotype_id),
+        justification = "Imported unchanged from the selected executable OHDSI phenotype.",
+        circe_json = source
+      )
+      .studyAgentSlashImportAcpCohortDefinition(source_rec, imported_definition_dir)
+    }
     if (isTRUE(interactive)) {
       if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
       cat("\n== Creating candidate definition preview ==\n")
       preparation <- .studyAgentSlashPreviewPhenotypeCandidate(
-        client = dialogue_acp_client$client,
-        phenotype_id = phenotype_id,
-        role_label = role_label,
-        workflow_type = "incidence"
+        client = dialogue_acp_client$client, phenotype_id = phenotype_id,
+        role_label = role_label, workflow_type = "incidence"
       )
+      prepared_direct <- !is.null(.studyAgentSlashAcpRecommendationJson(list(circe_json = (preparation$source_snapshot %||% list())$source_payload %||% NULL)))
       repeat {
-        choice <- trimws(as.character(readline_with_navigation(
-          "Use this candidate [USE; codes=list source code/text evidence; /back]: "
-        ) %||% ""))
-        if (tolower(choice) %in% c("codes", "evidence", "list")) {
-          .studyAgentSlashPrintPhenotypeSourceEvidence(preparation)
-          next
-        }
+        prompt <- if (prepared_direct) "Use executable source [Enter=direct unchanged; template=save exact JSON for Atlas editing; codes=list source code/text evidence; /back]: " else "Use this candidate [USE; codes=list source code/text evidence; /back]: "
+        choice <- trimws(as.character(readline_with_navigation(prompt) %||% ""))
+        if (tolower(choice) %in% c("codes", "evidence", "list")) { .studyAgentSlashPrintPhenotypeSourceEvidence(preparation); next }
         break
       }
-      if (is_back_signal(choice) || !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (is_back_signal(choice) || tolower(choice) %in% c("back", "/back")) return(list(action = "retry"))
+      if (prepared_direct && !nzchar(choice)) {
+        imported <- import_prepared_source(preparation)
+        return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
+      }
+      if (prepared_direct && identical(tolower(choice), "template")) {
+        saved <- .studyAgentSlashPreparePhenotypeConversion(client = dialogue_acp_client$client, phenotype_id = phenotype_id, role_label = role_label, output_dir = output_dir, workflow_type = "incidence", display = FALSE)
+        cat(sprintf("Exact source Circe JSON saved to %s. Edit it in Atlas, then choose file at the cohort-source menu to import the edited definition.\n", file.path(saved$artifact_dir, "source-definition.json")))
+        return(list(action = "retry"))
+      }
+      if (!prepared_direct && !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (prepared_direct && !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (prepared_direct) {
+        imported <- import_prepared_source(preparation)
+        return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
+      }
     }
-
     if (!is.null(.studyAgentSlashAcpRecommendationJson(rec))) {
       imported <- .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir)
-      return(list(
-        action = "handled",
-        selected_source_ids = imported$source_id,
-        selected_ids = imported$cohort_definition_id,
-        records = list(imported$metadata)
-      ))
+      return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
     }
-
     if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
-    preparation <- .studyAgentSlashPreparePhenotypeConversion(
-      client = dialogue_acp_client$client,
-      phenotype_id = phenotype_id,
-      role_label = role_label,
-      output_dir = output_dir,
-      workflow_type = "incidence", display = FALSE
-    )
-    cat(sprintf(
-      "A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n",
-      preparation$artifact_dir %||% "phenotype-conversion"
-    ))
-    .studyAgentSlashCreateComputableRoleSelection(
-      role_label,
-      if (identical(role_label, "target")) target_statement else outcome_statement,
-      dialogue_acp_client$client,
-      output_dir,
-      imported_definition_dir,
-      interactive,
-      readline_with_navigation,
-      is_back_signal,
-      write_json
-    )
+    preparation <- .studyAgentSlashPreparePhenotypeConversion(client = dialogue_acp_client$client, phenotype_id = phenotype_id, role_label = role_label, output_dir = output_dir, workflow_type = "incidence", display = FALSE)
+    cat(sprintf("A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n", preparation$artifact_dir %||% "phenotype-conversion"))
+    .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json)
   }
 
   seed_db_details_template <- function(path) {
