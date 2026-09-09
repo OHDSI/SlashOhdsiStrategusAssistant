@@ -231,6 +231,25 @@
   paste0(logic, "\n\n### Concept Set Expressions\n\n", concept_sets)
 }
 
+.studyAgentSlashCirceDefinitionConsole <- function(markdown, max_column_width = 42L) {
+  lines <- strsplit(gsub("\\r\\n?", "\\n", paste(as.character(markdown), collapse = ""), perl = TRUE), "\\n")[[1]]
+  out <- character(0); i <- 1L
+  parse_row <- function(value) trimws(strsplit(sub("^\\||\\|$", "", value), "\\|")[[1]])
+  clip <- function(value, width) if (nchar(value, type = "width") > width) paste0(substr(value, 1L, max(1L, width - 3L)), "...") else value
+  while (i <= length(lines)) {
+    line <- lines[[i]]
+    if (grepl("^### +", line)) { out <- c(out, paste0("== ", sub("^### +", "", line), " ==")); i <- i + 1L; next }
+    is_table <- grepl("^\\|.*\\|$", line) && i < length(lines) && grepl("^\\|[ :|-]+\\|$", lines[[i + 1L]])
+    if (!is_table) { out <- c(out, line); i <- i + 1L; next }
+    header <- parse_row(line); rows <- list(); i <- i + 2L
+    while (i <= length(lines) && grepl("^\\|.*\\|$", lines[[i]])) { rows[[length(rows) + 1L]] <- parse_row(lines[[i]]); i <- i + 1L }
+    widths <- vapply(seq_along(header), function(col) min(max_column_width, max(c(nchar(header[[col]], type = "width"), vapply(rows, function(row) if (length(row) >= col) nchar(row[[col]], type = "width") else 0L, integer(1))))), integer(1))
+    format_row <- function(row) paste(vapply(seq_along(header), function(col) sprintf(paste0("%-", widths[[col]], "s"), clip(if (length(row) >= col) row[[col]] else "", widths[[col]])), character(1)), collapse = "  ")
+    out <- c(out, format_row(header), paste(vapply(widths, function(width) paste(rep("-", width), collapse = ""), character(1)), collapse = "  "), vapply(rows, format_row, character(1)), "")
+  }
+  paste(out, collapse = "\n")
+}
+
 .studyAgentSlashPmcApprovedConceptSetPrintFriendly <- function(artifact_dir, approval_path = file.path(artifact_dir, "concept-set-approval.json")) {
   if (!file.exists(approval_path)) return("")
   approval <- tryCatch(jsonlite::read_json(approval_path, simplifyVector = FALSE), error = function(error) NULL)
@@ -272,9 +291,13 @@
     readable <- paste(as.character(readable), collapse = "")
     approved_sets <- .studyAgentSlashPmcApprovedConceptSetPrintFriendly(artifact_dir, approval_path)
     if (nzchar(approved_sets)) readable <- paste(readable, approved_sets, sep = "\n\n")
-    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
-    if (identical(readable_action, "v")) cat(readable, "\n", sep = "")
-    if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path, useBytes = TRUE); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
+    markdown_path <- file.path(artifact_dir, "cohort-definition-readable.md")
+    writeLines(readable, markdown_path, useBytes = TRUE)
+    console_readable <- .studyAgentSlashCirceDefinitionConsole(readable)
+    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable cohort definition [v=view console, m=view Markdown, Enter=skip]: ") %||% "")))
+    if (identical(readable_action, "v")) cat(console_readable, "\n", sep = "")
+    if (identical(readable_action, "m")) cat(readable, "\n", sep = "")
+    cat(sprintf("Saved Markdown cohort definition to %s.\n", markdown_path))
   }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
@@ -408,8 +431,8 @@
   if (identical(as.character(presentation$source %||% ""), "OHDSI Phenotype Library") && is.list(source_payload) && is.list(source_payload$PrimaryCriteria)) {
     readable <- .studyAgentSlashCirceDefinitionPrintFriendly(source_payload)
     if (!inherits(readable, "error")) {
-      readable <- paste(as.character(readable), collapse = "")
-      cat("Executable OHDSI definition (deterministic Circe rendering):\n", readable, "\n", sep = "")
+      readable <- .studyAgentSlashCirceDefinitionConsole(readable)
+      cat("Executable OHDSI definition (fixed-width console rendering):\n", readable, "\n", sep = "")
     } else {
       summary <- trimws(as.character(presentation$plain_language_summary %||% ""))
       if (nzchar(summary)) cat(sprintf("Definition summary:\n%s\n", summary))
@@ -431,7 +454,7 @@
     as.integer(x$code_count %||% 0L) > 0L && as.character(x$mapping_support %||% "") %in% c("unavailable", "not_applicable")
   }, readiness$code_systems %||% list())
   if (length(unsupported_systems)) {
-    cat("Source codes are not mappable in this server's local vocabulary; they remain review evidence only.\n")
+    cat("The phenotype's source concept codes are not mappable to standard concepts in the ACP server's local vocabulary. You can look at them manually for suggestions (evidence) only. Adapting this definition will involve creating new concept sets.\n")
   }
   composition <- preparation$composition_seed %||% NULL
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {

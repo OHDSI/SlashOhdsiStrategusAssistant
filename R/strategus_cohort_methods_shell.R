@@ -2834,6 +2834,12 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       workflow_type = workflow_type,
       allow_multiple = allow_multiple
     )
+    if (!identical(selection$action %||% "", "handled")) {
+      return(list(action = "retry", selected_ids = integer(0), selected_source_ids = character(0),
+        selection_source = "none", recommendation_path = json_string_or_null(if (file.exists(recommendation_path)) recommendation_path else NULL),
+        recommendation_source = if (used_cached_recommendation) "cached_recommendation" else if (!is.null(recommendation_response)) "acp_flow" else "not_run",
+        statement = statement))
+    }
     selected_ids <- as.integer(unique(selection$selected_ids[!is.na(selection$selected_ids)]))
     selected_source_ids <- as.character(selection$selected_source_ids %||% character(0))
 
