@@ -333,7 +333,13 @@
     chosen <- prompt(sprintf("Reviewed CSV path [%s; /back returns to cohort-source selection]: ", csv)); if (is_back(chosen)) return(list(action = "retry")); if (!nzchar(chosen)) chosen <- csv
     converted <- .studyAgentSlashPmcReviewCsv(chosen, manifest, review$review_id %||% ""); sets <- converted$concept_sets; preview <- converted$approval_preview
   } else if (identical(action, "json")) {
-    chosen <- prompt("Atlas or ACP concept-set JSON path [/back returns to cohort-source selection]: "); if (is_back(chosen)) return(list(action = "retry")); sets <- .studyAgentSlashPmcExternalSets(chosen, narrative)
+    repeat {
+      chosen <- prompt("File path to JSON cohort definition (Atlas export or Capr->Circe) [/back returns to cohort-source selection]: ")
+      if (is_back(chosen)) return(list(action = "retry"))
+      parsed <- tryCatch(.studyAgentSlashPmcExternalSets(chosen, narrative), error = function(e) e)
+      if (!inherits(parsed, "error")) { sets <- parsed; break }
+      cat(sprintf("Concept-set JSON could not be used: %s. Enter a valid file path or /back.\n", conditionMessage(parsed)))
+    }
     preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(concept_set_name = set$name, concept_id = item$concept_id, concept_name = "external JSON", domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
   } else return(list(action = "retry"))
   .studyAgentSlashPmcPrintPreview(preview); approval_path <- file.path(artifact_dir, "concept-set-approval.json")
@@ -421,10 +427,11 @@
   } else if (identical(mapping$status %||% "", "not_requested")) {
     cat("Mapping evidence: OMOP vocabulary lookup was not requested; source codes remain review evidence only.\n")
   }
-  unavailable_systems <- Filter(function(x) identical(as.character(x$mapping_support %||% ""), "unavailable"), readiness$code_systems %||% list())
-  if (length(unavailable_systems)) {
-    labels <- vapply(unavailable_systems, function(x) as.character(x$source_system %||% x$system_name %||% "source terminology"), character(1))
-    cat(sprintf("Source terminology unavailable locally: %s; its source codes were not mapped.\n", paste(unique(labels), collapse = ", ")))
+  unsupported_systems <- Filter(function(x) {
+    as.integer(x$code_count %||% 0L) > 0L && as.character(x$mapping_support %||% "") %in% c("unavailable", "not_applicable")
+  }, readiness$code_systems %||% list())
+  if (length(unsupported_systems)) {
+    cat("Source codes are not mappable in this server's local vocabulary; they remain review evidence only.\n")
   }
   composition <- preparation$composition_seed %||% NULL
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {

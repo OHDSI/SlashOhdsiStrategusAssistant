@@ -2762,25 +2762,12 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     no_candidate_reason <- as.character(recommendation_response$fallback_reason %||% recommendations_core$fallback_reason %||% "")
 
     if (isTRUE(interactive) && length(recommendations) == 0 && !is.null(recommendation_response)) {
-      cat(sprintf("
-== %s Phenotype Recommendations ==
-", role_label))
-      if (identical(no_candidate_reason, "no_direct_role_match")) {
-        cat("No sufficiently direct computable OHDSI phenotype match was found for this cohort statement.
-")
-        cat("Enter a cohort ID manually if you want to continue with a known cohort definition.
-")
-      } else if (identical(no_candidate_reason, "no_viable_candidates_after_rerank")) {
-        cat("No viable phenotype candidates were identified from the current search results.
-")
-        cat("Enter a cohort ID manually if you want to continue with a known cohort definition.
-")
-      } else {
-        cat("No phenotype recommendations were returned.
-")
-        cat("Enter a cohort ID manually if you want to continue with a known cohort definition.
-")
-      }
+      cat(sprintf("\n== %s Phenotype Recommendations ==\n", role_label))
+      if (identical(no_candidate_reason, "no_direct_role_match")) cat("No sufficiently direct phenotype match was found for this cohort statement.\n")
+      else if (identical(no_candidate_reason, "no_viable_candidates_after_rerank")) cat("No viable phenotype candidates were identified from the current search results.\n")
+      else cat("No phenotype recommendations were returned.\n")
+      cat("Returning to cohort-source selection. You can choose create, Phenotype Library, file, directory, or database.\n")
+      return(list(action = "retry", selected_ids = integer(0), selected_source_ids = character(0), selection_source = "none", statement = statement))
     }
 
     if (isTRUE(interactive) && length(recommendations) > 0) {
@@ -2790,7 +2777,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         cat(sprintf("%d. %s (ID %s)\n", i, recommendation_name(rec), recommendation_id_label(rec)))
         if (!is.null(rec$justification)) cat(sprintf("   %s\n", rec$justification))
         if (!isTRUE(recommendation_is_circe_computable(rec))) {
-          cat("   Not directly computable in this workflow; descriptive phenotype conversion is not yet implemented.\n")
+          cat("   Can be converted through review-gated authoring.\n")
         }
       }
       ok_any <- prompt_yesno(sprintf("Do any of these look like potential candidates for the %s?", role_key), default = TRUE)
