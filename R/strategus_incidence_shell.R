@@ -44,10 +44,14 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
                                       resume = FALSE,
                                       executionTableDisplay = c("console", "viewer", "auto"),
                                       aiSupport = c("disabled", "enabled", "auto"),
-                                      checkRuntime = TRUE) {
+                                      checkRuntime = TRUE,
+                                      inputProvider = readline,
+                                      acpFlowCaller = NULL) {
   `%||%` <- function(x, y) if (is.null(x)) y else x
   execution_table_display <- .studyAgentSlashNormalizeExecutionTableDisplay(executionTableDisplay)
   ai_support <- .studyAgentSlashResolveAiSupport(aiSupport)
+  if (!is.function(inputProvider)) stop("inputProvider must be a function.")
+  if (!is.null(acpFlowCaller) && !is.function(acpFlowCaller)) stop("acpFlowCaller must be NULL or a function.")
   ai_enabled <- .studyAgentSlashAiSupportAllowsAcp(ai_support)
   if (isTRUE(checkRuntime)) checkStrategusRuntime()
 
@@ -95,6 +99,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   ensure_workflow_dialogue_client <- function(url) {
     if (!isTRUE(ai_enabled)) return(FALSE)
+    if (is.function(acpFlowCaller)) return(TRUE)
     if (acp_client_is_ready(dialogue_acp_client$client)) return(TRUE)
     if (is.null(url) || !nzchar(trimws(url))) return(FALSE)
     tryCatch({
@@ -107,6 +112,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   call_shell_acp_flow <- function(flow_name, body, url = acpUrl) {
     if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "ACP flow"))
+    if (is.function(acpFlowCaller)) return(acpFlowCaller(flow_name = flow_name, body = body, url = url))
     if (!acp_client_is_ready(dialogue_acp_client$client)) {
       if (!ensure_workflow_dialogue_client(url)) stop("ACP bridge unavailable.")
     }
@@ -115,10 +121,12 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   dialogue_session <- .studyAgentSlashNewWorkflowDialogueSession(
     interactive = interactive,
+    input_provider = inputProvider,
     study_intent_getter = current_study_intent,
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
+      if (is.function(acpFlowCaller)) return(acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl))
       if (!ensure_workflow_dialogue_client(acpUrl)) {
         stop("ACP bridge unavailable. Connect ACP before using /ohdsi.")
       }

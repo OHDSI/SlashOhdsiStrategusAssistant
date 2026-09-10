@@ -129,6 +129,7 @@ render_workflow_dialogue_response <- function(response) {
 #' Construct interactive /ohdsi dialogue handlers for a workflow shell
 #' @param interactive whether shell prompts are interactive
 #' @param study_intent_getter function returning current study intent
+#' @param input_provider function accepting a prompt and returning one response
 #' @param build_stage_context function taking studyIntent and dialogue_state
 #' @param call_dialogue function taking stage_context and message
 #' @param render_response function for displaying response text
@@ -137,6 +138,7 @@ render_workflow_dialogue_response <- function(response) {
 #' @return list with `state`, `set_context`, `handle_command`, and `readline`
 #' @export
 new_workflow_dialogue_session <- function(interactive = TRUE,
+                                          input_provider = readline,
                                           study_intent_getter,
                                           build_stage_context,
                                           call_dialogue,
@@ -147,6 +149,7 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
   if (!is.function(study_intent_getter)) stop("study_intent_getter must be a function.")
   if (!is.function(build_stage_context)) stop("build_stage_context must be a function.")
   if (!is.function(call_dialogue)) stop("call_dialogue must be a function.")
+  if (!is.function(input_provider)) stop("input_provider must be a function.")
   if (!is.function(render_response)) stop("render_response must be a function.")
 
   dialogue_state <- new_workflow_dialogue_state()
@@ -193,10 +196,9 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
     render_response(response)
     list(handled = TRUE, value = "")
   }
-
   readline_with_dialogue <- function(prompt, allow_back = FALSE) {
     repeat {
-      entered <- readline(wrap_workflow_dialogue_prompt(prompt))
+      entered <- input_provider(wrap_workflow_dialogue_prompt(prompt))
       trimmed <- trimws(as.character(entered %||% ""))
       if (isTRUE(allow_back) && identical(trimmed, "/back")) {
         return(new_workflow_navigation_signal("back"))
