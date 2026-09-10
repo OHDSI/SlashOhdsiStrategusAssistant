@@ -1698,11 +1698,16 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
-      message("Calling ACP flow: workflow_context_dialogue")
-      tryCatch(
-        call_shell_acp_flow("workflow_context_dialogue", list(stage_context = stage_context, message = message)),
-        error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue")
-      )
+      tryCatch({
+        response <- if (is.function(acpFlowCaller)) {
+          acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl)
+        } else {
+          if (!ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+          message("Calling ACP flow: workflow_context_dialogue")
+          .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+        }
+        .studyAgentSlashValidateAcpResponse(response, "workflow_context_dialogue")
+      }, error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue"))
     },
     empty_question_message = "Enter a question after /ohdsi. Example: /ohdsi why is washout important here?",
     disabled_command_message = if (!isTRUE(ai_enabled)) "The /ohdsi command is disabled for this no-AI workflow. Use h or help for local guidance." else NULL
@@ -5677,6 +5682,12 @@ Available exploration commands
   })
   outcome_rec <- outcome_recs[[1]]
   outcome_selected_ids_by_rec <- lapply(outcome_recs, function(rec) as.integer(rec$selected_ids))
+  outcome_selected_source_ids_by_rec <- lapply(seq_along(outcome_recs), function(i) {
+    ids <- outcome_selected_ids_by_rec[[i]]
+    source_ids <- as.character(outcome_recs[[i]]$selected_source_ids %||% character(0))
+    if (length(source_ids) != length(ids)) source_ids <- as.character(ids)
+    source_ids
+  })
   outcome_selected_statements_by_rec <- lapply(seq_along(outcome_recs), function(i) {
     rec <- outcome_recs[[i]]
     ids <- outcome_selected_ids_by_rec[[i]]
@@ -5688,11 +5699,14 @@ Available exploration commands
   })
   outcome_selected_ids_flat <- as.integer(unlist(outcome_selected_ids_by_rec, use.names = FALSE))
   outcome_selected_statements_flat <- as.character(unlist(outcome_selected_statements_by_rec, use.names = FALSE))
+  outcome_selected_source_ids_flat <- as.character(unlist(outcome_selected_source_ids_by_rec, use.names = FALSE))
   valid_outcome_selection <- !is.na(outcome_selected_ids_flat)
   outcome_selected_ids_flat <- outcome_selected_ids_flat[valid_outcome_selection]
   outcome_selected_statements_flat <- outcome_selected_statements_flat[valid_outcome_selection]
+  outcome_selected_source_ids_flat <- outcome_selected_source_ids_flat[valid_outcome_selection]
   unique_outcome_selection <- !duplicated(outcome_selected_ids_flat)
   outcome_rec$selected_ids <- as.integer(outcome_selected_ids_flat[unique_outcome_selection])
+  outcome_rec$selected_source_ids <- as.character(outcome_selected_source_ids_flat[unique_outcome_selection])
   outcome_selected_statements <- as.character(outcome_selected_statements_flat[unique_outcome_selection])
   if (length(outcome_recs) > 1) {
     outcome_rec$recommendation_source <- "per_outcome"

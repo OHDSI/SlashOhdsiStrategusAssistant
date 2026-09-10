@@ -159,6 +159,7 @@ testthat::test_that("invalid concept-set JSON re-prompts and accepts back", {
   )
   testthat::expect_identical(result$action, "retry")
   testthat::expect_length(transcript$prompts(), 3L)
+  testthat::expect_match(transcript$prompts()[[2]], "concept-set JSON", fixed = TRUE)
   testthat::expect_true(transcript$expect_complete())
 })
 

@@ -20,7 +20,7 @@ output_dir <- file.path(demo_root, "demo-strategus-cohort-method")
 incidence_output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")
 
 # To start from scratch, uncomment the next line. It removes only this demo output.
-# unlink(output_dir, recursive = TRUE, force = TRUE)
+#unlink(output_dir, recursive = TRUE, force = TRUE)
 
 slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
   outputDir = output_dir,

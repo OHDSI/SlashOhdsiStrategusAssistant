@@ -125,11 +125,16 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
-      message("Calling ACP flow: workflow_context_dialogue")
-      tryCatch(
-        call_shell_acp_flow("workflow_context_dialogue", list(stage_context = stage_context, message = message)),
-        error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue")
-      )
+      tryCatch({
+        response <- if (is.function(acpFlowCaller)) {
+          acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl)
+        } else {
+          if (!ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+          message("Calling ACP flow: workflow_context_dialogue")
+          .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+        }
+        .studyAgentSlashValidateAcpResponse(response, "workflow_context_dialogue")
+      }, error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue"))
     },
     empty_question_message = "Enter a question after /ohdsi. Example: /ohdsi why are these candidates weak here?",
     disabled_command_message = if (!isTRUE(ai_enabled)) "The /ohdsi command is disabled for this no-AI workflow. Use h or help for local guidance." else NULL

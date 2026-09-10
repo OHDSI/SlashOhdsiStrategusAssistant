@@ -357,7 +357,7 @@
     converted <- .studyAgentSlashPmcReviewCsv(chosen, manifest, review$review_id %||% ""); sets <- converted$concept_sets; preview <- converted$approval_preview
   } else if (identical(action, "json")) {
     repeat {
-      chosen <- prompt("File path to JSON cohort definition (Atlas export or Capr->Circe) [/back returns to cohort-source selection]: ")
+      chosen <- prompt("File path to Atlas or ACP concept-set JSON [/back returns to cohort-source selection]: ")
       if (is_back(chosen)) return(list(action = "retry"))
       parsed <- tryCatch(.studyAgentSlashPmcExternalSets(chosen, narrative), error = function(e) e)
       if (!inherits(parsed, "error")) { sets <- parsed; break }
