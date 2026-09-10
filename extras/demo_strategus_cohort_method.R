@@ -33,15 +33,15 @@ slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
 )
 
 # Resume a prior run:
-# slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
-#   outputDir = output_dir,
-#   incidenceOutputDir = incidence_output_dir,
-#   acpUrl = acp_url,
-#   aiSupport = "enabled",
-#   resume = TRUE,
-#   allowCache = TRUE,
-#   promptOnCache = TRUE,
-#   bannerPath = banner_path,
-#   showBanner = TRUE,
-#   executionTableDisplay = "console"
-# )
+## slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
+##   outputDir = output_dir,
+##   incidenceOutputDir = incidence_output_dir,
+##   acpUrl = acp_url,
+##   aiSupport = "enabled",
+##   resume = TRUE,
+##   allowCache = TRUE,
+##   promptOnCache = TRUE,
+##   bannerPath = banner_path,
+##   showBanner = TRUE,
+##   executionTableDisplay = "console"
+## )
