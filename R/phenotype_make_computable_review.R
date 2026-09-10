@@ -231,6 +231,25 @@
   paste0(logic, "\n\n### Concept Set Expressions\n\n", concept_sets)
 }
 
+.studyAgentSlashCirceDefinitionConsole <- function(markdown, max_column_width = 42L) {
+  lines <- strsplit(gsub("\\r\\n?", "\\n", paste(as.character(markdown), collapse = ""), perl = TRUE), "\\n")[[1]]
+  out <- character(0); i <- 1L
+  parse_row <- function(value) trimws(strsplit(sub("^\\||\\|$", "", value), "\\|")[[1]])
+  clip <- function(value, width) if (nchar(value, type = "width") > width) paste0(substr(value, 1L, max(1L, width - 3L)), "...") else value
+  while (i <= length(lines)) {
+    line <- lines[[i]]
+    if (grepl("^### +", line)) { out <- c(out, paste0("== ", sub("^### +", "", line), " ==")); i <- i + 1L; next }
+    is_table <- grepl("^\\|.*\\|$", line) && i < length(lines) && grepl("^\\|[ :|-]+\\|$", lines[[i + 1L]])
+    if (!is_table) { out <- c(out, line); i <- i + 1L; next }
+    header <- parse_row(line); rows <- list(); i <- i + 2L
+    while (i <= length(lines) && grepl("^\\|.*\\|$", lines[[i]])) { rows[[length(rows) + 1L]] <- parse_row(lines[[i]]); i <- i + 1L }
+    widths <- vapply(seq_along(header), function(col) min(max_column_width, max(c(nchar(header[[col]], type = "width"), vapply(rows, function(row) if (length(row) >= col) nchar(row[[col]], type = "width") else 0L, integer(1))))), integer(1))
+    format_row <- function(row) paste(vapply(seq_along(header), function(col) sprintf(paste0("%-", widths[[col]], "s"), clip(if (length(row) >= col) row[[col]] else "", widths[[col]])), character(1)), collapse = "  ")
+    out <- c(out, format_row(header), paste(vapply(widths, function(width) paste(rep("-", width), collapse = ""), character(1)), collapse = "  "), vapply(rows, format_row, character(1)), "")
+  }
+  paste(out, collapse = "\n")
+}
+
 .studyAgentSlashPmcApprovedConceptSetPrintFriendly <- function(artifact_dir, approval_path = file.path(artifact_dir, "concept-set-approval.json")) {
   if (!file.exists(approval_path)) return("")
   approval <- tryCatch(jsonlite::read_json(approval_path, simplifyVector = FALSE), error = function(error) NULL)
@@ -272,9 +291,13 @@
     readable <- paste(as.character(readable), collapse = "")
     approved_sets <- .studyAgentSlashPmcApprovedConceptSetPrintFriendly(artifact_dir, approval_path)
     if (nzchar(approved_sets)) readable <- paste(readable, approved_sets, sep = "\n\n")
-    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable Circe definition [v=view, s=save, Enter=skip]: ") %||% "")))
-    if (identical(readable_action, "v")) cat(readable, "\n", sep = "")
-    if (identical(readable_action, "s")) { readable_path <- file.path(artifact_dir, "cohort-definition-readable.txt"); writeLines(readable, readable_path, useBytes = TRUE); cat(sprintf("Saved print-friendly Circe definition to %s.\n", readable_path)) }
+    markdown_path <- file.path(artifact_dir, "cohort-definition-readable.md")
+    writeLines(readable, markdown_path, useBytes = TRUE)
+    console_readable <- .studyAgentSlashCirceDefinitionConsole(readable)
+    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable cohort definition [v=view console, m=view Markdown, Enter=skip]: ") %||% "")))
+    if (identical(readable_action, "v")) cat(console_readable, "\n", sep = "")
+    if (identical(readable_action, "m")) cat(readable, "\n", sep = "")
+    cat(sprintf("Saved Markdown cohort definition to %s.\n", markdown_path))
   }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
@@ -285,9 +308,12 @@
 }
 
 .studyAgentSlashPmcReviewHandoff <- function(role_label, narrative, scope, review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = TRUE) {
-  prompt <- function(text) { x <- trimws(as.character(readline_with_navigation(text) %||% "")); if (is_back_signal(x)) return(x); sub("^['\\\"](.*)['\\\"]$", "\\1", x) }
-  if (!identical(review$status %||% "", "needs_concept_review")) { cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir)); return(list(action = "retry")) }
+  is_back <- function(x) {
+    is_back_signal(x) || tolower(trimws(as.character(x %||% ""))) %in% c("back", "/back")
+  }
+  prompt <- function(text) { x <- trimws(as.character(readline_with_navigation(text) %||% "")); if (is_back(x)) return("/back"); sub("^['\\\"](.*)['\\\"]$", "\\1", x) }
   urls <- review$review_urls %||% list(); csv <- file.path(artifact_dir, "concept-review.csv"); manifest <- file.path(artifact_dir, "concept-review-manifest.json")
+  if (!identical(review$status %||% "", "needs_concept_review")) { cat(sprintf("ACP returned %s; inspect %s before retrying.\n", review$status %||% "an unexpected response", artifact_dir)); return(list(action = "retry")) }
   download_review <- function() {
     if (!isTRUE(download)) return(invisible(NULL))
     if (nzchar(as.character(urls$candidates_csv %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$candidates_csv, csv)
@@ -307,7 +333,7 @@
   }
   action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
   action <- tolower(prompt(action_prompt))
-  if (is_back_signal(action)) return(action)
+  if (is_back(action)) return(list(action = "retry"))
   request_expansion <- (identical(action, "full") && max_exact > 0L && max_exact <= 500L) || (identical(action, "max500") && max_exact > 500L)
   if (request_expansion) {
     requested_limit <- if (identical(action, "full")) max_exact else 500L
@@ -327,10 +353,16 @@
   if (identical(action, "csv") && !zero) {
     if (as.integer(review$candidate_count %||% 0L) > 500L && !identical(prompt("This CSV has more than 500 candidates; Atlas is recommended. Download anyway [type DOWNLOAD]: "), "DOWNLOAD")) return(list(action = "retry"))
     download_review()
-    chosen <- prompt(sprintf("Reviewed CSV path [%s]: ", csv)); if (is_back_signal(chosen)) return(chosen); if (!nzchar(chosen)) chosen <- csv
+    chosen <- prompt(sprintf("Reviewed CSV path [%s; /back returns to cohort-source selection]: ", csv)); if (is_back(chosen)) return(list(action = "retry")); if (!nzchar(chosen)) chosen <- csv
     converted <- .studyAgentSlashPmcReviewCsv(chosen, manifest, review$review_id %||% ""); sets <- converted$concept_sets; preview <- converted$approval_preview
   } else if (identical(action, "json")) {
-    chosen <- prompt("Atlas or ACP concept-set JSON path: "); if (is_back_signal(chosen)) return(chosen); sets <- .studyAgentSlashPmcExternalSets(chosen, narrative)
+    repeat {
+      chosen <- prompt("File path to Atlas or ACP concept-set JSON [/back returns to cohort-source selection]: ")
+      if (is_back(chosen)) return(list(action = "retry"))
+      parsed <- tryCatch(.studyAgentSlashPmcExternalSets(chosen, narrative), error = function(e) e)
+      if (!inherits(parsed, "error")) { sets <- parsed; break }
+      cat(sprintf("Concept-set JSON could not be used: %s. Enter a valid file path or /back.\n", conditionMessage(parsed)))
+    }
     preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(concept_set_name = set$name, concept_id = item$concept_id, concept_name = "external JSON", domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
   } else return(list(action = "retry"))
   .studyAgentSlashPmcPrintPreview(preview); approval_path <- file.path(artifact_dir, "concept-set-approval.json")
@@ -399,8 +431,8 @@
   if (identical(as.character(presentation$source %||% ""), "OHDSI Phenotype Library") && is.list(source_payload) && is.list(source_payload$PrimaryCriteria)) {
     readable <- .studyAgentSlashCirceDefinitionPrintFriendly(source_payload)
     if (!inherits(readable, "error")) {
-      readable <- paste(as.character(readable), collapse = "")
-      cat("Executable OHDSI definition (deterministic Circe rendering):\n", readable, "\n", sep = "")
+      readable <- .studyAgentSlashCirceDefinitionConsole(readable)
+      cat("Executable OHDSI definition (fixed-width console rendering):\n", readable, "\n", sep = "")
     } else {
       summary <- trimws(as.character(presentation$plain_language_summary %||% ""))
       if (nzchar(summary)) cat(sprintf("Definition summary:\n%s\n", summary))
@@ -417,6 +449,12 @@
     cat("Mapping evidence: OMOP vocabulary lookup was unavailable; do not infer mapping coverage.\n")
   } else if (identical(mapping$status %||% "", "not_requested")) {
     cat("Mapping evidence: OMOP vocabulary lookup was not requested; source codes remain review evidence only.\n")
+  }
+  unsupported_systems <- Filter(function(x) {
+    as.integer(x$code_count %||% 0L) > 0L && as.character(x$mapping_support %||% "") %in% c("unavailable", "not_applicable")
+  }, readiness$code_systems %||% list())
+  if (length(unsupported_systems)) {
+    cat("The phenotype's source concept codes are not mappable to standard concepts in the ACP server's local vocabulary. You can look at them manually for suggestions (evidence) only. Adapting this definition will involve creating new concept sets.\n")
   }
   composition <- preparation$composition_seed %||% NULL
   if (is.list(composition) && identical(composition$status %||% "", "unconfirmed")) {
@@ -506,5 +544,7 @@
     file.path(artifact_dir, "conversion-state.json"))
   if (isTRUE(display)) .studyAgentSlashPrintPhenotypePresentation(preparation)
   preparation$artifact_dir <- artifact_dir
+  source_payload <- snapshot$source_payload %||% NULL
+  if (is.list(source_payload) && length(source_payload)) write_json(source_payload, file.path(artifact_dir, "source-definition.json"))
   preparation
 }

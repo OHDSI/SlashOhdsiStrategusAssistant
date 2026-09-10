@@ -321,6 +321,9 @@
   project_state <- .studyAgentSlashReconcileProjectState(base_dir, write = TRUE)$project_state
   for (step in project_state$execution_plan %||% list()) {
     status <- as.character(step$status %||% "not_started")
+    if (identical(status, "interrupted")) {
+      return(list(status = "interrupted", step_id = step$step_id, message = sprintf("Step %s was interrupted by a previous R session. Inspect artifacts, then use run <step> to retry or reset <step> to start over.", step$step_id)))
+    }
     if (status %in% .studyAgentSlashWorkflowTerminalStatuses()) next
     if (!.studyAgentSlashStepDependenciesSatisfied(project_state, step)) next
     return(.studyAgentSlashRunWorkflowPlanStep(base_dir = base_dir, step_id = step$step_id, env = env))

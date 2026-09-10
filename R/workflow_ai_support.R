@@ -39,3 +39,35 @@
     as.character(policy$reason %||% "disabled_by_user")
   )
 }
+
+.studyAgentSlashAcpFailureCondition <- function(error, flow_name = NULL) {
+  technical_message <- if (inherits(error, "condition")) conditionMessage(error) else as.character(error %||% "unknown ACP error")
+  stage <- if (is.null(flow_name) || !nzchar(as.character(flow_name))) "the current AI-assisted step" else sprintf("ACP flow '%s'", as.character(flow_name))
+  structure(
+    list(
+      message = sprintf("The AI-assisted workflow cannot continue because %s is unavailable or failed upstream. Stop this shell and contact the ACP service administrator before resuming.", stage),
+      call = NULL,
+      flow_name = flow_name,
+      technical_message = technical_message
+    ),
+    class = c("study_agent_acp_failure", "error", "condition")
+  )
+}
+
+.studyAgentSlashStopForAcpFailure <- function(error, flow_name = NULL) {
+  if (inherits(error, "study_agent_acp_failure")) stop(error)
+  stop(.studyAgentSlashAcpFailureCondition(error, flow_name))
+}
+
+.studyAgentSlashValidateAcpResponse <- function(response, flow_name = NULL) {
+  core <- response$full_result %||% response
+  status <- tolower(trimws(as.character(core$status %||% response$status %||% "")))
+  error_message <- core$error %||% response$error %||% NULL
+  if (!is.null(error_message) && nzchar(trimws(as.character(error_message)))) {
+    .studyAgentSlashStopForAcpFailure(as.character(error_message), flow_name)
+  }
+  if (status %in% c("error", "failed", "unavailable")) {
+    .studyAgentSlashStopForAcpFailure(sprintf("ACP returned status '%s'.", status), flow_name)
+  }
+  response
+}

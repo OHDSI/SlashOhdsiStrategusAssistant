@@ -44,10 +44,13 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
                                       resume = FALSE,
                                       executionTableDisplay = c("console", "viewer", "auto"),
                                       aiSupport = c("disabled", "enabled", "auto"),
-                                      checkRuntime = TRUE) {
-  `%||%` <- function(x, y) if (is.null(x)) y else x
+                                      checkRuntime = TRUE,
+                                      inputProvider = readline,
+                                      acpFlowCaller = NULL) {
   execution_table_display <- .studyAgentSlashNormalizeExecutionTableDisplay(executionTableDisplay)
   ai_support <- .studyAgentSlashResolveAiSupport(aiSupport)
+  if (!is.function(inputProvider)) stop("inputProvider must be a function.")
+  if (!is.null(acpFlowCaller) && !is.function(acpFlowCaller)) stop("acpFlowCaller must be NULL or a function.")
   ai_enabled <- .studyAgentSlashAiSupportAllowsAcp(ai_support)
   if (isTRUE(checkRuntime)) checkStrategusRuntime()
 
@@ -95,6 +98,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   ensure_workflow_dialogue_client <- function(url) {
     if (!isTRUE(ai_enabled)) return(FALSE)
+    if (is.function(acpFlowCaller)) return(TRUE)
     if (acp_client_is_ready(dialogue_acp_client$client)) return(TRUE)
     if (is.null(url) || !nzchar(trimws(url))) return(FALSE)
     tryCatch({
@@ -107,23 +111,30 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   call_shell_acp_flow <- function(flow_name, body, url = acpUrl) {
     if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "ACP flow"))
+    if (is.function(acpFlowCaller)) return(acpFlowCaller(flow_name = flow_name, body = body, url = url))
     if (!acp_client_is_ready(dialogue_acp_client$client)) {
       if (!ensure_workflow_dialogue_client(url)) stop("ACP bridge unavailable.")
     }
-    .studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body)
+    .studyAgentSlashValidateAcpResponse(.studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body), flow_name)
   }
 
   dialogue_session <- .studyAgentSlashNewWorkflowDialogueSession(
     interactive = interactive,
+    input_provider = inputProvider,
     study_intent_getter = current_study_intent,
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
-      if (!ensure_workflow_dialogue_client(acpUrl)) {
-        stop("ACP bridge unavailable. Connect ACP before using /ohdsi.")
-      }
-      message("Calling ACP flow: workflow_context_dialogue")
-      .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+      tryCatch({
+        response <- if (is.function(acpFlowCaller)) {
+          acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl)
+        } else {
+          if (!ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
+          message("Calling ACP flow: workflow_context_dialogue")
+          .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+        }
+        .studyAgentSlashValidateAcpResponse(response, "workflow_context_dialogue")
+      }, error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue"))
     },
     empty_question_message = "Enter a question after /ohdsi. Example: /ohdsi why are these candidates weak here?",
     disabled_command_message = if (!isTRUE(ai_enabled)) "The /ohdsi command is disabled for this no-AI workflow. Use h or help for local guidance." else NULL
@@ -148,9 +159,9 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     invisible(NULL)
   }
 
-  readline_with_dialogue <- function(prompt, allow_back = FALSE) {
+  readline_with_dialogue <- function(prompt, allow_back = FALSE, deferred_back_message = NULL) {
     repeat {
-      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back)
+      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back, deferred_back_message = deferred_back_message)
       if (is_back_signal(entered) || !isTRUE(build_help_mode$enabled)) return(entered)
       lowered <- tolower(trimws(as.character(entered %||% "")))
       if (lowered %in% c("h", "help")) {
@@ -161,6 +172,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     }
   }
   readline_with_navigation <- function(prompt) readline_with_dialogue(prompt, allow_back = TRUE)
+  readline_with_deferred_back <- function(prompt, message) readline_with_dialogue(prompt, allow_back = TRUE, deferred_back_message = message)
 
   prompt_yesno <- function(prompt, default = TRUE) {
     if (!isTRUE(interactive)) return(default)
@@ -177,6 +189,17 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     suffix <- if (default) "[Y/n]" else "[y/N]"
     resp <- readline_with_navigation(sprintf("%s %s ", prompt, suffix))
     if (is_back_signal(resp)) return(resp)
+    resp <- tolower(trimws(as.character(resp %||% "")))
+    if (resp == "") return(default)
+    if (resp %in% c("y", "yes")) return(TRUE)
+    if (resp %in% c("n", "no")) return(FALSE)
+    default
+
+  }
+  prompt_yesno_deferred_back <- function(prompt, default = TRUE, message) {
+    if (!isTRUE(interactive)) return(default)
+    suffix <- if (default) "[Y/n]" else "[y/N]"
+    resp <- readline_with_deferred_back(sprintf("%s %s ", prompt, suffix), message)
     resp <- tolower(trimws(as.character(resp %||% "")))
     if (resp == "") return(default)
     if (resp %in% c("y", "yes")) return(TRUE)
@@ -224,6 +247,8 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
   }
 
   write_json <- function(x, path) {
+    parent <- dirname(path)
+    if (!dir.exists(parent) && !dir.create(parent, recursive = TRUE, showWarnings = FALSE)) stop(sprintf("Could not create artifact directory: %s", parent))
     jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)
   }
 
@@ -321,161 +346,43 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     ))
   }
 
-  collect_time_at_risk_settings <- function(seed_settings,
-                                            study_intent,
-                                            target_statement,
-                                            outcome_statement,
-                                            target_ids,
-                                            outcome_ids) {
+  collect_time_at_risk_settings <- function(seed_settings, study_intent, target_statement, outcome_statement, target_ids, outcome_ids) {
     settings <- normalize_time_at_risk_settings(seed_settings)
-
-    set_dialogue_context(
-      "time_at_risk_configuration",
-      context = list(
-        study_intent = study_intent,
-        target_statement = target_statement,
-        outcome_statement = outcome_statement,
-        selected_target_ids = as.list(target_ids %||% list()),
-        selected_outcome_ids = as.list(outcome_ids %||% list()),
-        time_at_risk_settings = settings,
-        denominator_guidance = "Denominators depend on cohort entry logic, TAR definitions, and chosen strata settings."
-      )
-    )
-
+    set_dialogue_context("time_at_risk_configuration", context = list(study_intent = study_intent, target_statement = target_statement, outcome_statement = outcome_statement, selected_target_ids = as.list(target_ids %||% list()), selected_outcome_ids = as.list(outcome_ids %||% list()), time_at_risk_settings = settings))
+    field_back_message <- "`/back` cannot revise an earlier field in this time-at-risk section. Finish this section, then use `/back` at the next stage boundary."
     if (isTRUE(interactive)) cat("\n== Step 8: Configure time at risk ==\n")
     print_time_at_risk_settings(settings)
     if (!isTRUE(interactive)) return(settings)
-    use_current_settings <- prompt_yesno_navigation("Use these time-at-risk and strata settings?", default = TRUE)
-    if (is_back_signal(use_current_settings)) return(use_current_settings)
+    use_current_settings <- prompt_yesno_deferred_back("Use these time-at-risk and strata settings?", TRUE, field_back_message)
     if (isTRUE(use_current_settings)) return(settings)
-
-    prompt_integer_value <- function(prompt, current, min_value = NULL) {
-      repeat {
-        entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-        if (is_back_signal(entered)) return(entered)
-        entered <- trimws(as.character(entered %||% ""))
-        if (!nzchar(entered)) return(as.integer(current))
-        parsed <- suppressWarnings(as.integer(entered))
-        if (!is.na(parsed) && (is.null(min_value) || parsed >= min_value)) return(as.integer(parsed))
-        cat("Please enter a valid integer.\n")
-      }
-    }
-
-    prompt_choice_value <- function(prompt, current, choices) {
-      repeat {
-        entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-        if (is_back_signal(entered)) return(entered)
-        entered <- tolower(trimws(as.character(entered %||% "")))
-        if (!nzchar(entered)) return(current)
-        if (entered %in% choices) return(entered)
-        cat(sprintf("Please enter one of: %s\n", paste(choices, collapse = ", ")))
-      }
-    }
-
-    prompt_text_value <- function(prompt, current) {
-      entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-      if (is_back_signal(entered)) return(entered)
-      if (!nzchar(trimws(entered))) current else trimws(entered)
-    }
-
-    tar_count <- prompt_integer_value("Number of time-at-risk definitions", length(settings$time_at_risk_defs), min_value = 1L)
-    if (is_back_signal(tar_count)) return(tar_count)
+    read_field <- function(prompt) readline_with_deferred_back(prompt, field_back_message)
+    integer_field <- function(prompt, current, min_value = NULL) repeat { value <- trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% "")); parsed <- if (!nzchar(value)) as.integer(current) else suppressWarnings(as.integer(value)); if (!is.na(parsed) && (is.null(min_value) || parsed >= min_value)) return(as.integer(parsed)); cat("Please enter a valid integer.\n") }
+    choice_field <- function(prompt, current, choices) repeat { value <- tolower(trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% ""))); if (!nzchar(value)) return(current); if (value %in% choices) return(value); cat(sprintf("Please enter one of: %s\n", paste(choices, collapse = ", "))) }
+    text_field <- function(prompt, current) { value <- trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% "")); if (!nzchar(value)) current else value }
+    tar_count <- integer_field("Number of time-at-risk definitions", length(settings$time_at_risk_defs), 1L)
     defs <- vector("list", tar_count)
-    for (i in seq_len(tar_count)) {
-      current <- settings$time_at_risk_defs[[min(i, length(settings$time_at_risk_defs))]] %||% list(
-        id = i,
-        name = sprintf("TAR %s", i),
-        startWith = "start",
-        startOffset = 0L,
-        endWith = "end",
-        endOffset = 0L
-      )
-      cat(sprintf("\nTAR %s\n", i))
-      tar_id <- prompt_integer_value("  TAR id", current$id, min_value = 1L)
-      if (is_back_signal(tar_id)) return(tar_id)
-      tar_name <- prompt_text_value("  TAR label", current$name %||% sprintf("TAR %s", i))
-      if (is_back_signal(tar_name)) return(tar_name)
-      start_with <- prompt_choice_value("  startWith (start/end)", current$startWith %||% "start", c("start", "end"))
-      if (is_back_signal(start_with)) return(start_with)
-      start_offset <- prompt_integer_value("  startOffset (days)", current$startOffset %||% 0L)
-      if (is_back_signal(start_offset)) return(start_offset)
-      end_with <- prompt_choice_value("  endWith (start/end)", current$endWith %||% "end", c("start", "end"))
-      if (is_back_signal(end_with)) return(end_with)
-      end_offset <- prompt_integer_value("  endOffset (days)", current$endOffset %||% 0L)
-      if (is_back_signal(end_offset)) return(end_offset)
-      defs[[i]] <- list(
-        id = tar_id,
-        name = tar_name,
-        startWith = start_with,
-        startOffset = start_offset,
-        endWith = end_with,
-        endOffset = end_offset
-      )
-    }
-
-    default_analysis_ids <- paste(vapply(defs, function(item) as.integer(item$id), integer(1)), collapse = ",")
-    analysis_ids_text <- readline_with_navigation(sprintf("Analysis TAR ids (comma-separated) [%s]: ", default_analysis_ids))
-    if (is_back_signal(analysis_ids_text)) return(analysis_ids_text)
-    analysis_ids_text <- trimws(as.character(analysis_ids_text %||% ""))
-    analysis_ids <- if (!nzchar(analysis_ids_text)) {
-      suppressWarnings(as.integer(strsplit(default_analysis_ids, ",", fixed = TRUE)[[1]]))
-    } else {
-      suppressWarnings(as.integer(trimws(strsplit(analysis_ids_text, ",", fixed = TRUE)[[1]])))
-    }
-
-    strata_settings <- settings$strata_settings
-    by_year <- prompt_yesno_navigation("Stratify incidence by calendar year?", default = isTRUE(strata_settings$byYear))
-    if (is_back_signal(by_year)) return(by_year)
-    by_gender <- prompt_yesno_navigation("Stratify incidence by gender?", default = isTRUE(strata_settings$byGender))
-    if (is_back_signal(by_gender)) return(by_gender)
-    by_age <- prompt_yesno_navigation("Stratify incidence by age?", default = isTRUE(strata_settings$byAge))
-    if (is_back_signal(by_age)) return(by_age)
-    age_breaks_default <- paste(strata_settings$ageBreaks %||% c(18L, 45L, 65L), collapse = ",")
-    age_breaks <- strata_settings$ageBreaks %||% c(18L, 45L, 65L)
-    if (isTRUE(by_age)) {
-      age_breaks_text <- readline_with_navigation(sprintf("Age breaks (comma-separated integers) [%s]: ", age_breaks_default))
-      if (is_back_signal(age_breaks_text)) return(age_breaks_text)
-      age_breaks_text <- trimws(as.character(age_breaks_text %||% ""))
-      if (nzchar(age_breaks_text)) {
-        age_breaks <- suppressWarnings(as.integer(trimws(strsplit(age_breaks_text, ",", fixed = TRUE)[[1]])))
-      }
-    }
-
-    settings <- normalize_time_at_risk_settings(list(
-      time_at_risk_defs = defs,
-      analysis_tar_ids = analysis_ids,
-      strata_settings = list(
-        byYear = by_year,
-        byGender = by_gender,
-        byAge = by_age,
-        ageBreaks = age_breaks
-      )
-    ))
-    print_time_at_risk_settings(settings)
-    settings
+    for (i in seq_len(tar_count)) { current <- settings$time_at_risk_defs[[min(i, length(settings$time_at_risk_defs))]] %||% list(id = i, name = sprintf("TAR %s", i), startWith = "start", startOffset = 0L, endWith = "end", endOffset = 0L); cat(sprintf("\nTAR %s\n", i)); defs[[i]] <- list(id = integer_field("  TAR id", current$id, 1L), name = text_field("  TAR label", current$name), startWith = choice_field("  startWith (start/end)", current$startWith, c("start", "end")), startOffset = integer_field("  startOffset (days)", current$startOffset), endWith = choice_field("  endWith (start/end)", current$endWith, c("start", "end")), endOffset = integer_field("  endOffset (days)", current$endOffset)) }
+    default_ids <- paste(vapply(defs, function(x) as.integer(x$id), integer(1)), collapse = ",")
+    ids_text <- trimws(as.character(read_field(sprintf("Analysis TAR ids (comma-separated) [%s]: ", default_ids)) %||% "")); analysis_ids <- if (!nzchar(ids_text)) as.integer(strsplit(default_ids, ",", fixed = TRUE)[[1]]) else as.integer(trimws(strsplit(ids_text, ",", fixed = TRUE)[[1]]))
+    strata <- settings$strata_settings
+    by_year <- prompt_yesno_deferred_back("Stratify incidence by calendar year?", isTRUE(strata$byYear), field_back_message)
+    by_gender <- prompt_yesno_deferred_back("Stratify incidence by gender?", isTRUE(strata$byGender), field_back_message)
+    by_age <- prompt_yesno_deferred_back("Stratify incidence by age?", isTRUE(strata$byAge), field_back_message)
+    age_breaks <- strata$ageBreaks %||% c(18L, 45L, 65L)
+    if (isTRUE(by_age)) { age_text <- trimws(as.character(read_field(sprintf("Age breaks (comma-separated integers) [%s]: ", paste(age_breaks, collapse = ","))) %||% "")); if (nzchar(age_text)) age_breaks <- as.integer(trimws(strsplit(age_text, ",", fixed = TRUE)[[1]])) }
+    settings <- normalize_time_at_risk_settings(list(time_at_risk_defs = defs, analysis_tar_ids = analysis_ids, strata_settings = list(byYear = by_year, byGender = by_gender, byAge = by_age, ageBreaks = age_breaks)))
+    print_time_at_risk_settings(settings); settings
   }
 
   acp_try <- function(path, body, label) {
-    repeat {
-      resp <- NULL
-      err <- NULL
-      flow_name <- sub("^/flows/", "", as.character(path))
-      resp <- tryCatch(
-        call_shell_acp_flow(flow_name, body),
-        error = function(e) {
-          err <<- e
-          NULL
-        }
-      )
-      if (is.null(err)) return(resp)
-      msg <- conditionMessage(err)
-      if (!isTRUE(interactive)) stop(msg)
-      retry <- prompt_yesno(sprintf("ACP call failed (%s). Try again?", msg), default = TRUE)
-      if (!retry) {
-        mark_checkpoint(label, list(path = path, error = msg))
-        stop(sprintf("Stopping after ACP error. Resume with resume=TRUE once ready. (%s)", label))
+    flow_name <- sub("^/flows/", "", as.character(path))
+    tryCatch(
+      call_shell_acp_flow(flow_name, body),
+      error = function(e) {
+        mark_checkpoint(label, list(path = path, technical_error = conditionMessage(e)))
+        .studyAgentSlashStopForAcpFailure(e, flow_name)
       }
-    }
+    )
   }
 
   checkpoint_path <- function(label) {
@@ -490,6 +397,13 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
 
   has_checkpoint <- function(label) {
     file.exists(checkpoint_path(label))
+  }
+
+  checkpoint_matches_statement <- function(label, statement) {
+    if (!has_checkpoint(label)) return(FALSE)
+    checkpoint <- tryCatch(read_json(checkpoint_path(label)), error = function(error) NULL)
+    saved <- trimws(as.character(checkpoint$role_statement %||% ""))
+    nzchar(saved) && identical(saved, trimws(as.character(statement %||% "")))
   }
 
   is_absolute_path <- function(path) {
@@ -546,62 +460,56 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
   prepare_recommended_phenotype <- function(rec, role_label) {
     phenotype_id <- trimws(as.character(rec$phenotype_id %||% ""))
     if (!nzchar(phenotype_id)) stop("Selected ACP recommendation has no stable phenotype_id.")
-
+    preparation <- NULL
+    import_prepared_source <- function(preparation) {
+      source <- (preparation$source_snapshot %||% list())$source_payload %||% NULL
+      source_rec <- list(
+        phenotype_id = phenotype_id,
+        phenotype_name = as.character((preparation$presentation %||% list())$title %||% rec$phenotype_name %||% phenotype_id),
+        justification = "Imported unchanged from the selected executable OHDSI phenotype.",
+        circe_json = source
+      )
+      .studyAgentSlashImportAcpCohortDefinition(source_rec, imported_definition_dir)
+    }
     if (isTRUE(interactive)) {
       if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
       cat("\n== Creating candidate definition preview ==\n")
       preparation <- .studyAgentSlashPreviewPhenotypeCandidate(
-        client = dialogue_acp_client$client,
-        phenotype_id = phenotype_id,
-        role_label = role_label,
-        workflow_type = "incidence"
+        client = dialogue_acp_client$client, phenotype_id = phenotype_id,
+        role_label = role_label, workflow_type = "incidence"
       )
+      prepared_direct <- !is.null(.studyAgentSlashAcpRecommendationJson(list(circe_json = (preparation$source_snapshot %||% list())$source_payload %||% NULL)))
       repeat {
-        choice <- trimws(as.character(readline_with_navigation(
-          "Use this candidate [USE; codes=list source code/text evidence; /back]: "
-        ) %||% ""))
-        if (tolower(choice) %in% c("codes", "evidence", "list")) {
-          .studyAgentSlashPrintPhenotypeSourceEvidence(preparation)
-          next
-        }
+        prompt <- if (prepared_direct) "Use executable source [Enter=direct unchanged; template=save exact JSON for Atlas editing; codes=list source code/text evidence; /back]: " else "Use this candidate [USE; codes=list source code/text evidence; /back]: "
+        choice <- trimws(as.character(readline_with_navigation(prompt) %||% ""))
+        if (tolower(choice) %in% c("codes", "evidence", "list")) { .studyAgentSlashPrintPhenotypeSourceEvidence(preparation); next }
         break
       }
-      if (is_back_signal(choice) || !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (is_back_signal(choice) || tolower(choice) %in% c("back", "/back")) return(list(action = "retry"))
+      if (prepared_direct && !nzchar(choice)) {
+        imported <- import_prepared_source(preparation)
+        return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
+      }
+      if (prepared_direct && identical(tolower(choice), "template")) {
+        saved <- .studyAgentSlashPreparePhenotypeConversion(client = dialogue_acp_client$client, phenotype_id = phenotype_id, role_label = role_label, output_dir = output_dir, workflow_type = "incidence", display = FALSE)
+        cat(sprintf("Exact source Circe JSON saved to %s. Edit it in Atlas, then choose file at the cohort-source menu to import the edited definition.\n", file.path(saved$artifact_dir, "source-definition.json")))
+        return(list(action = "retry"))
+      }
+      if (!prepared_direct && !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (prepared_direct && !identical(toupper(choice), "USE")) return(list(action = "retry"))
+      if (prepared_direct) {
+        imported <- import_prepared_source(preparation)
+        return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
+      }
     }
-
     if (!is.null(.studyAgentSlashAcpRecommendationJson(rec))) {
       imported <- .studyAgentSlashImportAcpCohortDefinition(rec, imported_definition_dir)
-      return(list(
-        action = "handled",
-        selected_source_ids = imported$source_id,
-        selected_ids = imported$cohort_definition_id,
-        records = list(imported$metadata)
-      ))
+      return(list(action = "handled", selected_source_ids = imported$source_id, selected_ids = imported$cohort_definition_id, records = list(imported$metadata)))
     }
-
     if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable.")
-    preparation <- .studyAgentSlashPreparePhenotypeConversion(
-      client = dialogue_acp_client$client,
-      phenotype_id = phenotype_id,
-      role_label = role_label,
-      output_dir = output_dir,
-      workflow_type = "incidence", display = FALSE
-    )
-    cat(sprintf(
-      "A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n",
-      preparation$artifact_dir %||% "phenotype-conversion"
-    ))
-    .studyAgentSlashCreateComputableRoleSelection(
-      role_label,
-      if (identical(role_label, "target")) target_statement else outcome_statement,
-      dialogue_acp_client$client,
-      output_dir,
-      imported_definition_dir,
-      interactive,
-      readline_with_navigation,
-      is_back_signal,
-      write_json
-    )
+    preparation <- .studyAgentSlashPreparePhenotypeConversion(client = dialogue_acp_client$client, phenotype_id = phenotype_id, role_label = role_label, output_dir = output_dir, workflow_type = "incidence", display = FALSE)
+    cat(sprintf("A local OMOP cohort definition has not been created. Source evidence is saved at %s. Next, confirm or revise the working OMOP cohort statement and answer the scope questions.\n", preparation$artifact_dir %||% "phenotype-conversion"))
+    .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json)
   }
 
   seed_db_details_template <- function(path) {
@@ -1425,6 +1333,8 @@ Available exploration commands
 
   if (isTRUE(resume) && file.exists(project_state_path) && file.exists(runtime_state_path)) {
     cat("\nExisting study-agent project detected.\n")
+    interrupted_steps <- .studyAgentSlashRecoverInterruptedWorkflowState(base_dir)
+    if (length(interrupted_steps) > 0) cat(sprintf("Recovered interrupted step(s): %s. Inspect artifacts before using run <step> to retry or reset <step> to start over.\n", paste(interrupted_steps, collapse = ", ")))
     confirm_resume_execution_roots()
     print_execution_status()
     if (isTRUE(interactive) && prompt_yesno("Resume existing generated workflow execution in this shell?", default = TRUE)) {
@@ -1449,6 +1359,10 @@ Available exploration commands
       studyIntent <- current_study_intent() %||% studyIntent
       resume <- FALSE
     }
+  }
+  if (isTRUE(resume) && !(file.exists(project_state_path) && file.exists(runtime_state_path)) && (has_checkpoint("target_advice") || has_checkpoint("outcome_advice"))) {
+    checkpoints <- c(if (has_checkpoint("target_advice")) "target advice" else NULL, if (has_checkpoint("outcome_advice")) "outcome advice" else NULL)
+    cat(sprintf("\nPre-build recovery note: saved %s checkpoint(s) were found. Only a confirmed concept-review session can resume in place; unconfirmed scope questions must be entered again. Saved recommendations are reused only when their cohort statement matches.\n", paste(checkpoints, collapse = ", ")))
   }
 
   default_intent <- studyIntent %||% ""
@@ -1633,33 +1547,26 @@ Available exploration commands
       selected_ids_target <- as.character(imported_target_selection$selected_source_ids)
       selected_target_records <- imported_target_selection$records
       cat(sprintf(
-        "Imported target cohort %s from %s as source id %s.
-",
+        "Imported target cohort %s from %s as source id %s.\n",
         imported_target$metadata$cohort_name %||% "<unknown>",
         imported_target$metadata$source_schema %||% imported_target$metadata$source_path %||% imported_target$metadata$source_label %||% "<unknown>",
         imported_target$source_id %||% "<unknown>"
       ))
     } else {
-      do_target_recs <- !isTRUE(resume) || !has_checkpoint("target_advice")
-      if (interactive && !do_target_recs) {
-        cat("\n== Step 2: Target phenotype recommendations (resumed) ==\n")
-      }
+      target_advice_matches <- checkpoint_matches_statement("target_advice", target_statement)
+      force_target_recommendation_refresh <- isTRUE(resume) && has_checkpoint("target_advice") && !target_advice_matches
+      do_target_recs <- !isTRUE(resume) || !has_checkpoint("target_advice") || !target_advice_matches
+      if (isTRUE(force_target_recommendation_refresh)) cat("Saved target advice belongs to a different or older target statement; refreshing recommendations.\n")
+      if (interactive && !do_target_recs) cat("\n== Step 2: Target phenotype recommendations (resumed for the saved target statement) ==\n")
       if (do_target_recs) {
-        if (interactive) {
-          cat("\n== Step 2: Target phenotype recommendations ==\n")
-        }
+        if (interactive) cat("\n== Step 2: Target phenotype recommendations ==\n")
         set_dialogue_context("target_recommendation", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        if (maybe_use_cache(recs_target_path, "target recommendations")) {
+        if (!isTRUE(force_target_recommendation_refresh) && maybe_use_cache(recs_target_path, "target recommendations")) {
           rec_response_target <- read_json(recs_target_path)
           used_cached_recs_target <- TRUE
         } else {
           message("Calling ACP flow: phenotype_recommendation (target)")
-          body <- list(
-            study_intent = target_statement,
-            top_k = topK,
-            max_results = maxResults,
-            candidate_limit = candidateLimit
-          )
+          body <- list(study_intent = target_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
           rec_response_target <- acp_try("/flows/phenotype_recommendation", body, "target_recommendation")
           write_json(rec_response_target, recs_target_path)
         }
@@ -1667,21 +1574,20 @@ Available exploration commands
         rec_response_target <- read_json(recs_target_path)
         used_cached_recs_target <- TRUE
       } else {
-        do_target_recs <- TRUE
         message("No cached target recommendations found; rerunning target recommendations.")
-        body <- list(
-          study_intent = target_statement,
-          top_k = topK,
-          max_results = maxResults,
-          candidate_limit = candidateLimit
-        )
+        body <- list(study_intent = target_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
         rec_response_target <- acp_try("/flows/phenotype_recommendation", body, "target_recommendation_resume")
         write_json(rec_response_target, recs_target_path)
       }
 
       recs_core_target <- rec_response_target$recommendations %||% rec_response_target
       recommendations_target <- recs_core_target$phenotype_recommendations %||% list()
-      if (length(recommendations_target) == 0) stop("No target phenotype recommendations returned.")
+      if (length(recommendations_target) == 0) {
+        cat("\n== Target Phenotype Recommendations ==\n")
+        cat("No sufficiently direct phenotype match was found for this cohort statement.\n")
+        cat("Returning to cohort-source selection. You can choose create, Phenotype Library, file, directory, or database.\n")
+        next
+      }
 
       cat("\n== Target Phenotype Recommendations ==\n")
       for (i in seq_along(recommendations_target)) {
@@ -1734,7 +1640,7 @@ Available exploration commands
               cat("Questions to clarify:\n")
               for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
             }
-            mark_checkpoint("target_advice", list(recommendations_path = recs_target_path))
+            mark_checkpoint("target_advice", list(recommendations_path = recs_target_path, role_statement = target_statement))
             next_action <- tolower(trimws(as.character(readline_with_navigation(
               "Next [rewrite=revise target statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
             ) %||% "")))
@@ -1950,33 +1856,22 @@ Available exploration commands
       if (!identical(imported_outcome_selection$action %||% "", "handled")) next
       selected_outcome_records <- imported_outcome_selection$records
       selected_ids_outcome <- as.character(imported_outcome_selection$selected_source_ids)
-      cat(sprintf(
-        "Imported %s outcome cohort definition(s) from %s.
-",
-        length(selected_ids_outcome),
-        outcome_source_mode
-      ))
+      cat(sprintf("Imported %s outcome cohort definition(s) from %s.\n", length(selected_ids_outcome), outcome_source_mode))
     } else {
-      do_outcome_recs <- !isTRUE(resume) || !has_checkpoint("outcome_advice")
-      if (interactive && !do_outcome_recs) {
-        cat("\n== Step 5: Outcome phenotype recommendations (resumed) ==\n")
-      }
+      outcome_advice_matches <- checkpoint_matches_statement("outcome_advice", outcome_statement)
+      force_outcome_recommendation_refresh <- isTRUE(resume) && has_checkpoint("outcome_advice") && !outcome_advice_matches
+      do_outcome_recs <- !isTRUE(resume) || !has_checkpoint("outcome_advice") || !outcome_advice_matches
+      if (isTRUE(force_outcome_recommendation_refresh)) cat("Saved outcome advice belongs to a different or older outcome statement; refreshing recommendations.\n")
+      if (interactive && !do_outcome_recs) cat("\n== Step 5: Outcome phenotype recommendations (resumed for the saved outcome statement) ==\n")
       if (do_outcome_recs) {
-        if (interactive) {
-          cat("\n== Step 5: Outcome phenotype recommendations ==\n")
-        }
+        if (interactive) cat("\n== Step 5: Outcome phenotype recommendations ==\n")
         set_dialogue_context("outcome_recommendation", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        if (maybe_use_cache(recs_outcome_path, "outcome recommendations")) {
+        if (!isTRUE(force_outcome_recommendation_refresh) && maybe_use_cache(recs_outcome_path, "outcome recommendations")) {
           rec_response_outcome <- read_json(recs_outcome_path)
           used_cached_recs_outcome <- TRUE
         } else {
           message("Calling ACP flow: phenotype_recommendation (outcome)")
-          body <- list(
-            study_intent = outcome_statement,
-            top_k = topK,
-            max_results = maxResults,
-            candidate_limit = candidateLimit
-          )
+          body <- list(study_intent = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
           rec_response_outcome <- acp_try("/flows/phenotype_recommendation", body, "outcome_recommendation")
           write_json(rec_response_outcome, recs_outcome_path)
         }
@@ -1984,22 +1879,20 @@ Available exploration commands
         rec_response_outcome <- read_json(recs_outcome_path)
         used_cached_recs_outcome <- TRUE
       } else {
-        do_outcome_recs <- TRUE
         message("No cached outcome recommendations found; rerunning outcome recommendations.")
-        body <- list(
-          study_intent = outcome_statement,
-          top_k = topK,
-          max_results = maxResults,
-          candidate_limit = candidateLimit
-        )
+        body <- list(study_intent = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit)
         rec_response_outcome <- acp_try("/flows/phenotype_recommendation", body, "outcome_recommendation_resume")
         write_json(rec_response_outcome, recs_outcome_path)
       }
 
       recs_core_outcome <- rec_response_outcome$recommendations %||% rec_response_outcome
       recommendations_outcome <- recs_core_outcome$phenotype_recommendations %||% list()
-      if (length(recommendations_outcome) == 0) stop("No outcome phenotype recommendations returned.")
-
+      if (length(recommendations_outcome) == 0) {
+        cat("\n== Outcome Phenotype Recommendations ==\n")
+        cat("No sufficiently direct phenotype match was found for this cohort statement.\n")
+        cat("Returning to cohort-source selection. You can choose create, Phenotype Library, file, directory, or database.\n")
+        next
+      }
       cat("\n== Outcome Phenotype Recommendations ==\n")
       for (i in seq_along(recommendations_outcome)) {
         rec <- recommendations_outcome[[i]]
@@ -2036,25 +1929,16 @@ Available exploration commands
             advice_core <- advice$advice %||% advice
             cat("\n== Advisory guidance ==\n")
             cat(advice_core$advice %||% "", "\n")
-            if (length(advice_core$next_steps %||% list()) > 0) {
-              cat("Next steps:\n")
-              for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step))
-            }
-            if (length(advice_core$questions %||% list()) > 0) {
-              cat("Questions to clarify:\n")
-              for (q in advice_core$questions) cat(sprintf("  - %s\n", q))
-            }
-            mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path))
+            if (length(advice_core$next_steps %||% list()) > 0) { cat("Next steps:\n"); for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step)) }
+            if (length(advice_core$questions %||% list()) > 0) { cat("Questions to clarify:\n"); for (q in advice_core$questions) cat(sprintf("  - %s\n", q)) }
+            mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path, role_statement = outcome_statement))
             next_action <- tolower(trimws(as.character(readline_with_navigation("Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: ") %||% "")))
             if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
             if (identical(next_action, "rewrite")) {
               revised_statement <- readline_with_navigation("Revised outcome cohort statement: ")
               if (is_back_signal(revised_statement)) next
               revised_statement <- trimws(as.character(revised_statement %||% ""))
-              if (nzchar(revised_statement)) {
-                outcome_statement <- revised_statement
-                recs_outcome_path <- file.path(output_dir, "recommendations_outcome_revised.json")
-              }
+              if (nzchar(revised_statement)) { outcome_statement <- revised_statement; recs_outcome_path <- file.path(output_dir, "recommendations_outcome_revised.json") }
               next
             }
             message("Returning to the cohort-source menu. Select create to build a review package and optionally review it in Atlas.")

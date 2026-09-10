@@ -20,7 +20,7 @@ output_dir <- file.path(demo_root, "demo-strategus-cohort-method")
 incidence_output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")
 
 # To start from scratch, uncomment the next line. It removes only this demo output.
-# unlink(output_dir, recursive = TRUE, force = TRUE)
+#unlink(output_dir, recursive = TRUE, force = TRUE)
 
 slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
   outputDir = output_dir,
@@ -33,15 +33,15 @@ slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
 )
 
 # Resume a prior run:
-# slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
-#   outputDir = output_dir,
-#   incidenceOutputDir = incidence_output_dir,
-#   acpUrl = acp_url,
-#   aiSupport = "enabled",
-#   resume = TRUE,
-#   allowCache = TRUE,
-#   promptOnCache = TRUE,
-#   bannerPath = banner_path,
-#   showBanner = TRUE,
-#   executionTableDisplay = "console"
-# )
+## slashOhdsiStrategusAssistant::runStrategusCohortMethodsShell(
+##   outputDir = output_dir,
+##   incidenceOutputDir = incidence_output_dir,
+##   acpUrl = acp_url,
+##   aiSupport = "enabled",
+##   resume = TRUE,
+##   allowCache = TRUE,
+##   promptOnCache = TRUE,
+##   bannerPath = banner_path,
+##   showBanner = TRUE,
+##   executionTableDisplay = "console"
+## )

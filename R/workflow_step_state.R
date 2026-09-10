@@ -317,8 +317,8 @@
       derived_status <- "failed"
     } else if (identical(derived_status, "running")) {
       derived_status <- "running"
-    } else if (identical(derived_status, "skipped")) {
-      derived_status <- "skipped"
+    } else if (derived_status %in% c("skipped", "interrupted")) {
+      derived_status <- derived_status
     } else {
       derived_status <- if (isTRUE(deps_ok)) "not_started" else "blocked"
     }
@@ -358,6 +358,83 @@
     .studyAgentSlashWriteRuntimeState(runtime_state, base_dir)
   }
   list(project_state = project_state, runtime_state = runtime_state, statuses = statuses)
+}
+
+.studyAgentSlashAssessInterruptedStepArtifacts <- function(base_dir, step_id) {
+  step_id <- as.character(step_id %||% "")
+  if (identical(step_id, "diagnostics")) {
+    roots <- .studyAgentSlashConfiguredExecutionRoots(base_dir, prefer_confirmed = TRUE)
+    search_roots <- unique(c(
+      file.path(as.character(roots$results_root %||% ""), "CohortDiagnosticsModule"),
+      file.path(base_dir, "cm-diagnostics")
+    ))
+    search_roots <- search_roots[nzchar(search_roots) & dir.exists(search_roots)]
+    candidates <- unique(unlist(lapply(search_roots, function(root) {
+      list.files(root, pattern = "\\.(sqlite|duckdb)$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+    }), use.names = FALSE))
+    valid <- lapply(candidates, function(path) {
+      bytes <- tryCatch(readBin(path, what = "raw", n = 4096L), error = function(e) raw())
+      if (length(bytes) >= 15L && identical(bytes[seq_len(15L)], charToRaw("SQLite format 3"))) return(list(path = path, store_type = "sqlite"))
+      if (identical(rawToChar(bytes[seq_len(min(16L, length(bytes)))], multiple = FALSE), "SQLite format 3\\000")) return(list(path = path, store_type = "sqlite"))
+      if (length(grepRaw(charToRaw("DUCKDB"), bytes, fixed = TRUE)) > 0) return(list(path = path, store_type = "duckdb"))
+      NULL
+    })
+    valid <- Filter(Negate(is.null), valid)
+    if (length(valid) == 1L) return(list(status = "completed", reason = paste0("valid_diagnostics_", valid[[1]]$store_type), path = valid[[1]]$path, store_type = valid[[1]]$store_type))
+    if (length(valid) > 1L) return(list(status = "interrupted", reason = "ambiguous_diagnostics_result_stores", paths = as.list(vapply(valid, `[[`, character(1), "path"))))
+    return(list(status = "interrupted", reason = "diagnostics_result_store_missing_or_invalid"))
+  }
+  if (step_id %in% c("cm_spec", "incidence_spec")) {
+    summary_path <- file.path(base_dir, "analysis-settings", "strategus_execute_summary.json")
+    summary <- tryCatch(.studyAgentSlashReadProjectJson(summary_path), error = function(e) NULL)
+    if (identical(as.character(summary$overall_status %||% ""), "success")) return(list(status = "completed", reason = "successful_strategus_summary", path = summary_path))
+    return(list(status = "interrupted", reason = "strategus_summary_missing_or_not_successful"))
+  }
+  list(status = "interrupted", reason = "no_safe_completion_probe")
+}
+.studyAgentSlashRecoverInterruptedWorkflowState <- function(base_dir, write = TRUE) {
+  reconciled <- .studyAgentSlashReconcileProjectState(base_dir, write = FALSE)
+  project_state <- reconciled$project_state
+  runtime_state <- reconciled$runtime_state
+  interrupted <- character(0)
+  recovered <- FALSE
+  for (i in seq_along(project_state$execution_plan %||% list())) {
+    step <- project_state$execution_plan[[i]]
+    step_id <- as.character(step$step_id %||% "")
+    if (!identical(as.character(step$status %||% ""), "running")) next
+    assessment <- .studyAgentSlashAssessInterruptedStepArtifacts(base_dir, step_id)
+    if (identical(assessment$status, "completed")) {
+      project_state <- .studyAgentSlashSetProjectStepStatus(project_state, step_id, "completed", error = NULL)
+      runtime_state <- .studyAgentSlashRecordRuntimeStepStatus(runtime_state, step_id, "completed", error = NULL)
+      .studyAgentSlashWriteStepState(base_dir, step_id, "completed", summary = list(recovered_after_interruption = TRUE, recovery_reason = assessment$reason, artifact_path = assessment$path %||% NULL), error = NULL)
+      recovered <- TRUE
+      next
+    }
+    interrupted <- c(interrupted, step_id)
+    project_state <- .studyAgentSlashSetProjectStepStatus(
+      project_state, step_id, "interrupted",
+      error = "The previous R session ended while this step was running. Inspect artifacts before explicitly retrying or resetting it."
+    )
+    runtime_state <- .studyAgentSlashRecordRuntimeStepStatus(
+      runtime_state, step_id, "interrupted",
+      error = "Previous R session ended during execution."
+    )
+    .studyAgentSlashWriteStepState(
+      base_dir, step_id, "interrupted",
+      summary = list(recovery_required = TRUE, recovery_reason = "orphaned_running_step"),
+      error = "The previous R session ended while this step was running."
+    )
+  }
+  if (length(interrupted) > 0 || isTRUE(recovered)) {
+    project_state <- .studyAgentSlashAdvanceResumePointer(project_state)
+    runtime_state$current_step <- project_state$resume$current_step_id %||% NULL
+    if (isTRUE(write)) {
+      .studyAgentSlashWriteProjectState(project_state, base_dir)
+      .studyAgentSlashWriteRuntimeState(runtime_state, base_dir)
+    }
+  }
+  as.character(interrupted)
+
 }
 
 .studyAgentSlashWorkflowDownstreamStepIds <- function(project_state, step_id) {

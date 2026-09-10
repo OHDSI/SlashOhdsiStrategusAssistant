@@ -587,11 +587,27 @@
   if (is_back_signal(index_event)) return(index_event)
   domain <- prompt("Index event OMOP domain (Condition, Drug, Procedure, Measurement, Observation, Visit, or Device): ")
   if (is_back_signal(domain)) return(domain)
-  entry_limit <- prompt("Entry-event limit [First or All]: ")
-  if (is_back_signal(entry_limit)) return(entry_limit)
-  if (!entry_limit %in% c("First", "All")) stop("Entry-event limit must be First or All.")
-  prior_observation <- suppressWarnings(as.integer(prompt("Required prior continuous observation days: ")))
-  if (is.na(prior_observation) || prior_observation < 0L) stop("Prior observation must be a non-negative integer.")
+  repeat {
+    entry_limit_raw <- prompt("Entry-event limit [First or All]: ")
+    if (is_back_signal(entry_limit_raw)) return(entry_limit_raw)
+    entry_limit_key <- tolower(trimws(entry_limit_raw))
+    if (entry_limit_key %in% c("first", "all")) {
+      entry_limit <- if (identical(entry_limit_key, "first")) "First" else "All"
+      break
+    }
+    cat("Enter First or All. This field has no default because it changes cohort-entry behavior.\n")
+  }
+  repeat {
+    prior_raw <- prompt("Required prior continuous observation days [0]: ")
+    if (is_back_signal(prior_raw)) return(prior_raw)
+    if (!nzchar(trimws(prior_raw))) {
+      prior_observation <- 0L
+      break
+    }
+    prior_observation <- suppressWarnings(as.integer(prior_raw))
+    if (!is.na(prior_observation) && prior_observation >= 0L) break
+    cat("Enter a non-negative whole number, or press Enter to use 0.\n")
+  }
   vocabulary <- prompt("Optional index-event vocabulary restriction (for example RxNorm; press Enter for none): ")
   if (is_back_signal(vocabulary)) return(vocabulary)
   exit_strategy <- prompt("Exit strategy [observation]: ")
