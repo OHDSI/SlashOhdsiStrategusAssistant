@@ -1,7 +1,7 @@
 Package: slashOhdsiStrategusAssistant
 Type: Package
 Title: Strategus Workflow Assistant for slash-ohdsi
-Version: 0.1.0
+Version: 0.0.3
 Authors@R: person("Richard","Boyce", email="rdb20@pitt.edu", role=c("aut","cre"))
 Description: Wizard-like Strategus workflow package for creating specifications and executing them. Owns workflow-stage context construction, shell orchestration, checkpoints, and Strategus-facing assets. Functions provide shells that are optionally AI-enabled through the use of the slashOhdsiAcpClient.
 License: MIT + file LICENSE
