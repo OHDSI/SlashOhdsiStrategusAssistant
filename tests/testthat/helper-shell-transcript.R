@@ -18,3 +18,12 @@ new_shell_transcript <- function(responses) {
     }
   )
 }
+
+write_shell_circe_fixture <- function(path, id, name) {
+  jsonlite::write_json(
+    list(id = as.integer(id), name = as.character(name), PrimaryCriteria = list(), ConceptSets = list()),
+    path,
+    auto_unbox = TRUE
+  )
+  normalizePath(path, winslash = "/", mustWork = TRUE)
+}

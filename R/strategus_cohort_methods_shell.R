@@ -1728,9 +1728,9 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     invisible(NULL)
   }
 
-  readline_with_dialogue <- function(prompt, allow_back = FALSE) {
+  readline_with_dialogue <- function(prompt, allow_back = FALSE, deferred_back_message = NULL) {
     repeat {
-      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back)
+      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back, deferred_back_message = deferred_back_message)
       if (is_back_signal(entered) || !isTRUE(build_help_mode$enabled)) return(entered)
       lowered <- tolower(trimws(as.character(entered %||% "")))
       if (lowered %in% c("h", "help")) {
@@ -1741,6 +1741,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     }
   }
   readline_with_navigation <- function(prompt) readline_with_dialogue(prompt, allow_back = TRUE)
+  readline_with_deferred_back <- function(prompt, message) readline_with_dialogue(prompt, allow_back = TRUE, deferred_back_message = message)
 
   prompt_yesno <- function(prompt, default = TRUE) {
     if (!isTRUE(interactive)) return(default)
@@ -1757,6 +1758,17 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     suffix <- if (default) "[Y/n]" else "[y/N]"
     resp <- readline_with_navigation(sprintf("%s %s ", prompt, suffix))
     if (is_back_signal(resp)) return(resp)
+    resp <- tolower(trimws(as.character(resp %||% "")))
+    if (resp == "") return(default)
+    if (resp %in% c("y", "yes")) return(TRUE)
+    if (resp %in% c("n", "no")) return(FALSE)
+    default
+
+  }
+  prompt_yesno_deferred_back <- function(prompt, default = TRUE, message) {
+    if (!isTRUE(interactive)) return(default)
+    suffix <- if (default) "[Y/n]" else "[y/N]"
+    resp <- readline_with_deferred_back(sprintf("%s %s ", prompt, suffix), message)
     resp <- tolower(trimws(as.character(resp %||% "")))
     if (resp == "") return(default)
     if (resp %in% c("y", "yes")) return(TRUE)
@@ -3933,8 +3945,8 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       })
     }
 
-    use_acp <- ensure_connected(acp_url)
-    has_acp_post <- exists(".acp_post", mode = "function", inherits = TRUE)
+    use_acp <- is.function(acpFlowCaller) || ensure_connected(acp_url)
+    has_acp_post <- is.function(acpFlowCaller) || exists(".acp_post", mode = "function", inherits = TRUE)
     if (!isTRUE(use_acp) || !has_acp_post) {
       return(list(
         flow = flow_name,
@@ -3974,7 +3986,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     list(
       flow = flow_name,
       source = "acp_flow",
-      status = "received",
+      status = as.character(response$status %||% "received"),
       request = body,
       response = response,
       recommendation = recommendation
@@ -4700,6 +4712,8 @@ Available exploration commands
 
   if (isTRUE(resume) && file.exists(project_state_path) && file.exists(runtime_state_path)) {
     cat("\nExisting study-agent project detected.\n")
+    interrupted_steps <- .studyAgentSlashRecoverInterruptedWorkflowState(base_dir)
+    if (length(interrupted_steps) > 0) cat(sprintf("Recovered interrupted step(s): %s. Inspect artifacts before using run <step> to retry or reset <step> to start over.\n", paste(interrupted_steps, collapse = ", ")))
     confirm_resume_execution_roots()
     print_execution_status()
     if (isTRUE(interactive) && prompt_yesno("Resume existing generated workflow execution in this shell?", default = TRUE)) {
@@ -6120,110 +6134,14 @@ Available exploration commands
       )
     )
 
+    field_back_message <- "`/back` cannot revise an earlier field in this analytic-settings section. Finish this section, then use `/back` at the next stage boundary."
     step_by_step_io <- list(
-      section_header = function(label) {
-        set_dialogue_context(
-          "analytic_settings_step_by_step",
-          "analytic_settings",
-          context = list(
-            section = label,
-            study_intent = studyIntent,
-            target_statement = targetStatement,
-            comparator_statement = comparatorStatement,
-            outcome_statements = outcomeStatements,
-            comparison_label = comparisonLabel
-          )
-        )
-        cat(sprintf("\n[%s]\n", label))
-      },
-      text = function(prompt, default = "", allow_blank = FALSE) {
-        entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, default))
-        if (is_back_signal(entered)) return(entered)
-        entered <- trimws(as.character(entered %||% ""))
-        if (!nzchar(entered)) {
-          if (isTRUE(allow_blank)) return(default)
-          return(default)
-        }
-        entered
-      },
-      yesno = function(prompt, default = TRUE) {
-        prompt_yesno_navigation(prompt, default = default)
-      },
-      choice = function(prompt, choices, default, labels = choices) {
-        default_index <- match(default, choices)
-        if (is.na(default_index)) default_index <- 1L
-        current_label <- labels[[default_index]]
-        repeat {
-          cat(sprintf("%s\n", prompt))
-          for (i in seq_along(labels)) {
-            marker <- if (identical(labels[[i]], current_label)) " [default]" else ""
-            cat(sprintf("  %s. %s%s\n", i, labels[[i]], marker))
-          }
-          entered <- readline_with_navigation(sprintf("Select option [%s]: ", match(current_label, labels)))
-          if (is_back_signal(entered)) return(entered)
-          entered <- trimws(as.character(entered %||% ""))
-          if (!nzchar(entered)) return(choices[[match(current_label, labels)]])
-          option_idx <- suppressWarnings(as.integer(entered))
-          if (!is.na(option_idx) && option_idx >= 1 && option_idx <= length(labels)) {
-            return(choices[[option_idx]])
-          }
-          if (entered %in% labels) return(choices[[match(entered, labels)]])
-          if (entered %in% choices) return(entered)
-          cat(sprintf("Please enter one of: %s\n", paste(seq_along(labels), collapse = ", ")))
-        }
-      },
-      integer = function(prompt, default, min_value = NULL, allow_negative = TRUE) {
-        repeat {
-          prompt_suffix <- if (is.null(default)) "" else sprintf(" [%s]", default)
-          prompt_text <- trimws(as.character(prompt %||% ""))
-          rendered_prompt <- if (nzchar(prompt_text)) sprintf("%s%s: ", prompt_text, prompt_suffix) else sprintf("%s: ", prompt_suffix)
-          value <- readline_with_navigation(rendered_prompt)
-          if (is_back_signal(value)) return(value)
-          value <- trimws(as.character(value %||% ""))
-          if (value == "") {
-            value <- as.integer(default)
-          } else {
-            value <- suppressWarnings(as.integer(value))
-          }
-          if (is.na(value) || !is.finite(value)) {
-            cat("Please enter a valid integer.\n")
-            next
-          }
-          if (!allow_negative && value < 0) {
-            cat("Please enter a non-negative integer.\n")
-            next
-          }
-          if (!is.null(min_value) && value < min_value) {
-            cat(sprintf("Please enter an integer >= %s.\n", min_value))
-            next
-          }
-          return(value)
-        }
-      },
-      numeric = function(prompt, default, min_value = NULL) {
-        repeat {
-          prompt_suffix <- if (is.null(default)) "" else sprintf(" [%s]", default)
-          prompt_text <- trimws(as.character(prompt %||% ""))
-          rendered_prompt <- if (nzchar(prompt_text)) sprintf("%s%s: ", prompt_text, prompt_suffix) else sprintf("%s: ", prompt_suffix)
-          value <- readline_with_navigation(rendered_prompt)
-          if (is_back_signal(value)) return(value)
-          value <- trimws(as.character(value %||% ""))
-          if (value == "") {
-            value <- as.numeric(default)
-          } else {
-            value <- suppressWarnings(as.numeric(value))
-          }
-          if (is.na(value) || !is.finite(value)) {
-            cat("Please enter a valid number.\n")
-            next
-          }
-          if (!is.null(min_value) && value < min_value) {
-            cat(sprintf("Please enter a number >= %s.\n", min_value))
-            next
-          }
-          return(value)
-        }
-      }
+      section_header = function(label) { set_dialogue_context("analytic_settings_step_by_step", "analytic_settings", context = list(section = label, study_intent = studyIntent, target_statement = targetStatement, comparator_statement = comparatorStatement, outcome_statements = outcomeStatements, comparison_label = comparisonLabel)); cat(sprintf("\n[%s]\n", label)) },
+      text = function(prompt, default = "", allow_blank = FALSE) { entered <- readline_with_deferred_back(sprintf("%s [%s]: ", prompt, default), field_back_message); entered <- trimws(as.character(entered %||% "")); if (!nzchar(entered)) default else entered },
+      yesno = function(prompt, default = TRUE) prompt_yesno_deferred_back(prompt, default, field_back_message),
+      choice = function(prompt, choices, default, labels = choices) { default_index <- match(default, choices); if (is.na(default_index)) default_index <- 1L; repeat { cat(sprintf("%s\n", prompt)); for (i in seq_along(labels)) cat(sprintf("  %s. %s%s\n", i, labels[[i]], if (i == default_index) " [default]" else "")); entered <- trimws(as.character(readline_with_deferred_back(sprintf("Select option [%s]: ", default_index), field_back_message) %||% "")); if (!nzchar(entered)) return(choices[[default_index]]); index <- suppressWarnings(as.integer(entered)); if (!is.na(index) && index >= 1L && index <= length(choices)) return(choices[[index]]); if (entered %in% choices) return(entered); cat(sprintf("Please enter one of: %s\n", paste(seq_along(labels), collapse = ", "))) } },
+      integer = function(prompt, default, min_value = NULL, allow_negative = TRUE) repeat { value <- trimws(as.character(readline_with_deferred_back(sprintf("%s [%s]: ", prompt, default), field_back_message) %||% "")); parsed <- if (!nzchar(value)) as.integer(default) else suppressWarnings(as.integer(value)); if (!is.na(parsed) && (allow_negative || parsed >= 0L) && (is.null(min_value) || parsed >= min_value)) return(parsed); cat("Please enter a valid integer.\n") },
+      numeric = function(prompt, default, min_value = NULL) repeat { value <- trimws(as.character(readline_with_deferred_back(sprintf("%s [%s]: ", prompt, default), field_back_message) %||% "")); parsed <- if (!nzchar(value)) as.numeric(default) else suppressWarnings(as.numeric(value)); if (!is.na(parsed) && (is.null(min_value) || parsed >= min_value)) return(parsed); cat("Please enter a valid number.\n") }
     )
     step_by_step_result <- .studyAgentCollectStepByStepAnalyticSettings(
       default_settings = default_analytic_settings,
@@ -6300,12 +6218,12 @@ Available exploration commands
         message("Calling ACP flow: cohort_methods_specifications_recommendation")
       }
 
-      ensure_acp_ready(acpUrl)
       shell_suggestion_response <- tryCatch(
-        suggestCohortMethodSpecs(
-          studyIntent = acp_request_body$study_intent,
-          analyticSettingsDescription = acp_request_body$analytic_settings_description,
-          interactive = FALSE
+        call_cohort_methods_specifications_recommendation(
+          acp_url = acpUrl,
+          body = acp_request_body,
+          defaults_snapshot = effective_analytic_settings,
+          input_method = analytic_settings_input_method
         ),
         error = function(e) {
           list(

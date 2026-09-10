@@ -47,7 +47,6 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
                                       checkRuntime = TRUE,
                                       inputProvider = readline,
                                       acpFlowCaller = NULL) {
-  `%||%` <- function(x, y) if (is.null(x)) y else x
   execution_table_display <- .studyAgentSlashNormalizeExecutionTableDisplay(executionTableDisplay)
   ai_support <- .studyAgentSlashResolveAiSupport(aiSupport)
   if (!is.function(inputProvider)) stop("inputProvider must be a function.")
@@ -156,9 +155,9 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     invisible(NULL)
   }
 
-  readline_with_dialogue <- function(prompt, allow_back = FALSE) {
+  readline_with_dialogue <- function(prompt, allow_back = FALSE, deferred_back_message = NULL) {
     repeat {
-      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back)
+      entered <- raw_readline_with_dialogue(prompt, allow_back = allow_back, deferred_back_message = deferred_back_message)
       if (is_back_signal(entered) || !isTRUE(build_help_mode$enabled)) return(entered)
       lowered <- tolower(trimws(as.character(entered %||% "")))
       if (lowered %in% c("h", "help")) {
@@ -169,6 +168,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     }
   }
   readline_with_navigation <- function(prompt) readline_with_dialogue(prompt, allow_back = TRUE)
+  readline_with_deferred_back <- function(prompt, message) readline_with_dialogue(prompt, allow_back = TRUE, deferred_back_message = message)
 
   prompt_yesno <- function(prompt, default = TRUE) {
     if (!isTRUE(interactive)) return(default)
@@ -185,6 +185,17 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     suffix <- if (default) "[Y/n]" else "[y/N]"
     resp <- readline_with_navigation(sprintf("%s %s ", prompt, suffix))
     if (is_back_signal(resp)) return(resp)
+    resp <- tolower(trimws(as.character(resp %||% "")))
+    if (resp == "") return(default)
+    if (resp %in% c("y", "yes")) return(TRUE)
+    if (resp %in% c("n", "no")) return(FALSE)
+    default
+
+  }
+  prompt_yesno_deferred_back <- function(prompt, default = TRUE, message) {
+    if (!isTRUE(interactive)) return(default)
+    suffix <- if (default) "[Y/n]" else "[y/N]"
+    resp <- readline_with_deferred_back(sprintf("%s %s ", prompt, suffix), message)
     resp <- tolower(trimws(as.character(resp %||% "")))
     if (resp == "") return(default)
     if (resp %in% c("y", "yes")) return(TRUE)
@@ -331,138 +342,32 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     ))
   }
 
-  collect_time_at_risk_settings <- function(seed_settings,
-                                            study_intent,
-                                            target_statement,
-                                            outcome_statement,
-                                            target_ids,
-                                            outcome_ids) {
+  collect_time_at_risk_settings <- function(seed_settings, study_intent, target_statement, outcome_statement, target_ids, outcome_ids) {
     settings <- normalize_time_at_risk_settings(seed_settings)
-
-    set_dialogue_context(
-      "time_at_risk_configuration",
-      context = list(
-        study_intent = study_intent,
-        target_statement = target_statement,
-        outcome_statement = outcome_statement,
-        selected_target_ids = as.list(target_ids %||% list()),
-        selected_outcome_ids = as.list(outcome_ids %||% list()),
-        time_at_risk_settings = settings,
-        denominator_guidance = "Denominators depend on cohort entry logic, TAR definitions, and chosen strata settings."
-      )
-    )
-
+    set_dialogue_context("time_at_risk_configuration", context = list(study_intent = study_intent, target_statement = target_statement, outcome_statement = outcome_statement, selected_target_ids = as.list(target_ids %||% list()), selected_outcome_ids = as.list(outcome_ids %||% list()), time_at_risk_settings = settings))
+    field_back_message <- "`/back` cannot revise an earlier field in this time-at-risk section. Finish this section, then use `/back` at the next stage boundary."
     if (isTRUE(interactive)) cat("\n== Step 8: Configure time at risk ==\n")
     print_time_at_risk_settings(settings)
     if (!isTRUE(interactive)) return(settings)
-    use_current_settings <- prompt_yesno_navigation("Use these time-at-risk and strata settings?", default = TRUE)
-    if (is_back_signal(use_current_settings)) return(use_current_settings)
+    use_current_settings <- prompt_yesno_deferred_back("Use these time-at-risk and strata settings?", TRUE, field_back_message)
     if (isTRUE(use_current_settings)) return(settings)
-
-    prompt_integer_value <- function(prompt, current, min_value = NULL) {
-      repeat {
-        entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-        if (is_back_signal(entered)) return(entered)
-        entered <- trimws(as.character(entered %||% ""))
-        if (!nzchar(entered)) return(as.integer(current))
-        parsed <- suppressWarnings(as.integer(entered))
-        if (!is.na(parsed) && (is.null(min_value) || parsed >= min_value)) return(as.integer(parsed))
-        cat("Please enter a valid integer.\n")
-      }
-    }
-
-    prompt_choice_value <- function(prompt, current, choices) {
-      repeat {
-        entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-        if (is_back_signal(entered)) return(entered)
-        entered <- tolower(trimws(as.character(entered %||% "")))
-        if (!nzchar(entered)) return(current)
-        if (entered %in% choices) return(entered)
-        cat(sprintf("Please enter one of: %s\n", paste(choices, collapse = ", ")))
-      }
-    }
-
-    prompt_text_value <- function(prompt, current) {
-      entered <- readline_with_navigation(sprintf("%s [%s]: ", prompt, current))
-      if (is_back_signal(entered)) return(entered)
-      if (!nzchar(trimws(entered))) current else trimws(entered)
-    }
-
-    tar_count <- prompt_integer_value("Number of time-at-risk definitions", length(settings$time_at_risk_defs), min_value = 1L)
-    if (is_back_signal(tar_count)) return(tar_count)
+    read_field <- function(prompt) readline_with_deferred_back(prompt, field_back_message)
+    integer_field <- function(prompt, current, min_value = NULL) repeat { value <- trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% "")); parsed <- if (!nzchar(value)) as.integer(current) else suppressWarnings(as.integer(value)); if (!is.na(parsed) && (is.null(min_value) || parsed >= min_value)) return(as.integer(parsed)); cat("Please enter a valid integer.\n") }
+    choice_field <- function(prompt, current, choices) repeat { value <- tolower(trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% ""))); if (!nzchar(value)) return(current); if (value %in% choices) return(value); cat(sprintf("Please enter one of: %s\n", paste(choices, collapse = ", "))) }
+    text_field <- function(prompt, current) { value <- trimws(as.character(read_field(sprintf("%s [%s]: ", prompt, current)) %||% "")); if (!nzchar(value)) current else value }
+    tar_count <- integer_field("Number of time-at-risk definitions", length(settings$time_at_risk_defs), 1L)
     defs <- vector("list", tar_count)
-    for (i in seq_len(tar_count)) {
-      current <- settings$time_at_risk_defs[[min(i, length(settings$time_at_risk_defs))]] %||% list(
-        id = i,
-        name = sprintf("TAR %s", i),
-        startWith = "start",
-        startOffset = 0L,
-        endWith = "end",
-        endOffset = 0L
-      )
-      cat(sprintf("\nTAR %s\n", i))
-      tar_id <- prompt_integer_value("  TAR id", current$id, min_value = 1L)
-      if (is_back_signal(tar_id)) return(tar_id)
-      tar_name <- prompt_text_value("  TAR label", current$name %||% sprintf("TAR %s", i))
-      if (is_back_signal(tar_name)) return(tar_name)
-      start_with <- prompt_choice_value("  startWith (start/end)", current$startWith %||% "start", c("start", "end"))
-      if (is_back_signal(start_with)) return(start_with)
-      start_offset <- prompt_integer_value("  startOffset (days)", current$startOffset %||% 0L)
-      if (is_back_signal(start_offset)) return(start_offset)
-      end_with <- prompt_choice_value("  endWith (start/end)", current$endWith %||% "end", c("start", "end"))
-      if (is_back_signal(end_with)) return(end_with)
-      end_offset <- prompt_integer_value("  endOffset (days)", current$endOffset %||% 0L)
-      if (is_back_signal(end_offset)) return(end_offset)
-      defs[[i]] <- list(
-        id = tar_id,
-        name = tar_name,
-        startWith = start_with,
-        startOffset = start_offset,
-        endWith = end_with,
-        endOffset = end_offset
-      )
-    }
-
-    default_analysis_ids <- paste(vapply(defs, function(item) as.integer(item$id), integer(1)), collapse = ",")
-    analysis_ids_text <- readline_with_navigation(sprintf("Analysis TAR ids (comma-separated) [%s]: ", default_analysis_ids))
-    if (is_back_signal(analysis_ids_text)) return(analysis_ids_text)
-    analysis_ids_text <- trimws(as.character(analysis_ids_text %||% ""))
-    analysis_ids <- if (!nzchar(analysis_ids_text)) {
-      suppressWarnings(as.integer(strsplit(default_analysis_ids, ",", fixed = TRUE)[[1]]))
-    } else {
-      suppressWarnings(as.integer(trimws(strsplit(analysis_ids_text, ",", fixed = TRUE)[[1]])))
-    }
-
-    strata_settings <- settings$strata_settings
-    by_year <- prompt_yesno_navigation("Stratify incidence by calendar year?", default = isTRUE(strata_settings$byYear))
-    if (is_back_signal(by_year)) return(by_year)
-    by_gender <- prompt_yesno_navigation("Stratify incidence by gender?", default = isTRUE(strata_settings$byGender))
-    if (is_back_signal(by_gender)) return(by_gender)
-    by_age <- prompt_yesno_navigation("Stratify incidence by age?", default = isTRUE(strata_settings$byAge))
-    if (is_back_signal(by_age)) return(by_age)
-    age_breaks_default <- paste(strata_settings$ageBreaks %||% c(18L, 45L, 65L), collapse = ",")
-    age_breaks <- strata_settings$ageBreaks %||% c(18L, 45L, 65L)
-    if (isTRUE(by_age)) {
-      age_breaks_text <- readline_with_navigation(sprintf("Age breaks (comma-separated integers) [%s]: ", age_breaks_default))
-      if (is_back_signal(age_breaks_text)) return(age_breaks_text)
-      age_breaks_text <- trimws(as.character(age_breaks_text %||% ""))
-      if (nzchar(age_breaks_text)) {
-        age_breaks <- suppressWarnings(as.integer(trimws(strsplit(age_breaks_text, ",", fixed = TRUE)[[1]])))
-      }
-    }
-
-    settings <- normalize_time_at_risk_settings(list(
-      time_at_risk_defs = defs,
-      analysis_tar_ids = analysis_ids,
-      strata_settings = list(
-        byYear = by_year,
-        byGender = by_gender,
-        byAge = by_age,
-        ageBreaks = age_breaks
-      )
-    ))
-    print_time_at_risk_settings(settings)
-    settings
+    for (i in seq_len(tar_count)) { current <- settings$time_at_risk_defs[[min(i, length(settings$time_at_risk_defs))]] %||% list(id = i, name = sprintf("TAR %s", i), startWith = "start", startOffset = 0L, endWith = "end", endOffset = 0L); cat(sprintf("\nTAR %s\n", i)); defs[[i]] <- list(id = integer_field("  TAR id", current$id, 1L), name = text_field("  TAR label", current$name), startWith = choice_field("  startWith (start/end)", current$startWith, c("start", "end")), startOffset = integer_field("  startOffset (days)", current$startOffset), endWith = choice_field("  endWith (start/end)", current$endWith, c("start", "end")), endOffset = integer_field("  endOffset (days)", current$endOffset)) }
+    default_ids <- paste(vapply(defs, function(x) as.integer(x$id), integer(1)), collapse = ",")
+    ids_text <- trimws(as.character(read_field(sprintf("Analysis TAR ids (comma-separated) [%s]: ", default_ids)) %||% "")); analysis_ids <- if (!nzchar(ids_text)) as.integer(strsplit(default_ids, ",", fixed = TRUE)[[1]]) else as.integer(trimws(strsplit(ids_text, ",", fixed = TRUE)[[1]]))
+    strata <- settings$strata_settings
+    by_year <- prompt_yesno_deferred_back("Stratify incidence by calendar year?", isTRUE(strata$byYear), field_back_message)
+    by_gender <- prompt_yesno_deferred_back("Stratify incidence by gender?", isTRUE(strata$byGender), field_back_message)
+    by_age <- prompt_yesno_deferred_back("Stratify incidence by age?", isTRUE(strata$byAge), field_back_message)
+    age_breaks <- strata$ageBreaks %||% c(18L, 45L, 65L)
+    if (isTRUE(by_age)) { age_text <- trimws(as.character(read_field(sprintf("Age breaks (comma-separated integers) [%s]: ", paste(age_breaks, collapse = ","))) %||% "")); if (nzchar(age_text)) age_breaks <- as.integer(trimws(strsplit(age_text, ",", fixed = TRUE)[[1]])) }
+    settings <- normalize_time_at_risk_settings(list(time_at_risk_defs = defs, analysis_tar_ids = analysis_ids, strata_settings = list(byYear = by_year, byGender = by_gender, byAge = by_age, ageBreaks = age_breaks)))
+    print_time_at_risk_settings(settings); settings
   }
 
   acp_try <- function(path, body, label) {
@@ -1436,6 +1341,8 @@ Available exploration commands
 
   if (isTRUE(resume) && file.exists(project_state_path) && file.exists(runtime_state_path)) {
     cat("\nExisting study-agent project detected.\n")
+    interrupted_steps <- .studyAgentSlashRecoverInterruptedWorkflowState(base_dir)
+    if (length(interrupted_steps) > 0) cat(sprintf("Recovered interrupted step(s): %s. Inspect artifacts before using run <step> to retry or reset <step> to start over.\n", paste(interrupted_steps, collapse = ", ")))
     confirm_resume_execution_roots()
     print_execution_status()
     if (isTRUE(interactive) && prompt_yesno("Resume existing generated workflow execution in this shell?", default = TRUE)) {
@@ -1683,7 +1590,12 @@ Available exploration commands
 
       recs_core_target <- rec_response_target$recommendations %||% rec_response_target
       recommendations_target <- recs_core_target$phenotype_recommendations %||% list()
-      if (length(recommendations_target) == 0) stop("No target phenotype recommendations returned.")
+      if (length(recommendations_target) == 0) {
+        cat("\n== Target Phenotype Recommendations ==\n")
+        cat("No sufficiently direct phenotype match was found for this cohort statement.\n")
+        cat("Returning to cohort-source selection. You can choose create, Phenotype Library, file, directory, or database.\n")
+        next
+      }
 
       cat("\n== Target Phenotype Recommendations ==\n")
       for (i in seq_along(recommendations_target)) {
@@ -1983,7 +1895,12 @@ Available exploration commands
 
       recs_core_outcome <- rec_response_outcome$recommendations %||% rec_response_outcome
       recommendations_outcome <- recs_core_outcome$phenotype_recommendations %||% list()
-      if (length(recommendations_outcome) == 0) stop("No outcome phenotype recommendations returned.")
+      if (length(recommendations_outcome) == 0) {
+        cat("\n== Outcome Phenotype Recommendations ==\n")
+        cat("No sufficiently direct phenotype match was found for this cohort statement.\n")
+        cat("Returning to cohort-source selection. You can choose create, Phenotype Library, file, directory, or database.\n")
+        next
+      }
       cat("\n== Outcome Phenotype Recommendations ==\n")
       for (i in seq_along(recommendations_outcome)) {
         rec <- recommendations_outcome[[i]]

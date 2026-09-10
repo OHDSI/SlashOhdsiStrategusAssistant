@@ -196,10 +196,14 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
     render_response(response)
     list(handled = TRUE, value = "")
   }
-  readline_with_dialogue <- function(prompt, allow_back = FALSE) {
+  readline_with_dialogue <- function(prompt, allow_back = FALSE, deferred_back_message = NULL) {
     repeat {
       entered <- input_provider(wrap_workflow_dialogue_prompt(prompt))
       trimmed <- trimws(as.character(entered %||% ""))
+      if (identical(trimmed, "/back") && !is.null(deferred_back_message)) {
+        cat(sprintf("%s\n", as.character(deferred_back_message)))
+        next
+      }
       if (isTRUE(allow_back) && identical(trimmed, "/back")) {
         return(new_workflow_navigation_signal("back"))
       }
