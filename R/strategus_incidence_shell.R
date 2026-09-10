@@ -115,7 +115,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     if (!acp_client_is_ready(dialogue_acp_client$client)) {
       if (!ensure_workflow_dialogue_client(url)) stop("ACP bridge unavailable.")
     }
-    .studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body)
+    .studyAgentSlashValidateAcpResponse(.studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body), flow_name)
   }
 
   dialogue_session <- .studyAgentSlashNewWorkflowDialogueSession(
@@ -125,12 +125,11 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
-      if (is.function(acpFlowCaller)) return(acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl))
-      if (!ensure_workflow_dialogue_client(acpUrl)) {
-        stop("ACP bridge unavailable. Connect ACP before using /ohdsi.")
-      }
       message("Calling ACP flow: workflow_context_dialogue")
-      .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+      tryCatch(
+        call_shell_acp_flow("workflow_context_dialogue", list(stage_context = stage_context, message = message)),
+        error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue")
+      )
     },
     empty_question_message = "Enter a question after /ohdsi. Example: /ohdsi why are these candidates weak here?",
     disabled_command_message = if (!isTRUE(ai_enabled)) "The /ohdsi command is disabled for this no-AI workflow. Use h or help for local guidance." else NULL
@@ -371,26 +370,14 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
   }
 
   acp_try <- function(path, body, label) {
-    repeat {
-      resp <- NULL
-      err <- NULL
-      flow_name <- sub("^/flows/", "", as.character(path))
-      resp <- tryCatch(
-        call_shell_acp_flow(flow_name, body),
-        error = function(e) {
-          err <<- e
-          NULL
-        }
-      )
-      if (is.null(err)) return(resp)
-      msg <- conditionMessage(err)
-      if (!isTRUE(interactive)) stop(msg)
-      retry <- prompt_yesno(sprintf("ACP call failed (%s). Try again?", msg), default = TRUE)
-      if (!retry) {
-        mark_checkpoint(label, list(path = path, error = msg))
-        stop(sprintf("Stopping after ACP error. Resume with resume=TRUE once ready. (%s)", label))
+    flow_name <- sub("^/flows/", "", as.character(path))
+    tryCatch(
+      call_shell_acp_flow(flow_name, body),
+      error = function(e) {
+        mark_checkpoint(label, list(path = path, technical_error = conditionMessage(e)))
+        .studyAgentSlashStopForAcpFailure(e, flow_name)
       }
-    }
+    )
   }
 
   checkpoint_path <- function(label) {

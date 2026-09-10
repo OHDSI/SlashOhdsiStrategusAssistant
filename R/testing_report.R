@@ -174,7 +174,7 @@ strategusTestingReport <- function(projectPath, outputFile = NULL,
   c(
     lines,
     "## Harness coverage",
-    "",
+    "- Specification: cohort acquisition, phenotype recommendation, review-gated make-computable flows, phenotype improvements, multiple outcomes, method configuration, navigation, `/ohdsi` input handling, and end-to-end no-AI local JSON acquisition/configuration.",
     "- Specification: cohort acquisition, phenotype recommendation, review-gated make-computable flows, phenotype improvements, multiple outcomes, method configuration, navigation, and `/ohdsi` input handling.",
     "- Execution state: status and artifact discovery, snapshots, restore, step resolution, skip/reset, exploration-command validation, and resume-menu command recovery.",
     "- Interrupted sessions: orphaned running steps, explicit retry/reset behavior, successful final-execution summaries, and SQLite/DuckDB diagnostics result-store detection.",

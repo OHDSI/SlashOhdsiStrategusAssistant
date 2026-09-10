@@ -419,3 +419,97 @@ testthat::test_that("CohortMethod step-by-step wizard recovers an invalid parame
   testthat::expect_identical(result$settings$profile_name, "Stepwise fixture")
   testthat::expect_equal(sum(prompts == "Risk window start (days)"), 2L)
 })
+
+testthat::test_that("incidence no-AI workflow acquires local cohorts and generates scripts", {
+  fixture_dir <- tempfile("incidence-no-ai-fixtures-")
+  dir.create(fixture_dir, recursive = TRUE)
+  target_path <- write_shell_circe_fixture(file.path(fixture_dir, "target.json"), 701L, "ACE inhibitor")
+  outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 702L, "Cough")
+  output_dir <- file.path(fixture_dir, "workflow")
+  transcript <- new_shell_transcript(c(
+    "", "ACE inhibitor", "Cough", "", "file", target_path, "n", "file", outcome_path, "y", "n"
+  ))
+  no_acp_call <- function(...) stop("ACP must not be called when aiSupport is disabled.")
+
+  result <- runStrategusIncidenceShell(
+    outputDir = output_dir, interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = transcript$readline,
+    acpFlowCaller = no_acp_call
+  )
+
+  testthat::expect_true(transcript$expect_complete())
+  testthat::expect_true(file.exists(file.path(output_dir, "selected-target-cohorts", "701.json")))
+  testthat::expect_true(file.exists(file.path(output_dir, "selected-outcome-cohorts", "702.json")))
+  testthat::expect_true(file.exists(file.path(output_dir, "analysis-settings", "time_at_risk_settings.json")))
+  testthat::expect_true(file.exists(file.path(output_dir, "scripts", "03_generate_cohorts.R")))
+  testthat::expect_true(file.exists(file.path(output_dir, "scripts", "07_incidence_spec.R")))
+  state <- jsonlite::read_json(file.path(output_dir, "outputs", "study_agent_state.json"), simplifyVector = FALSE)
+  testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
+  testthat::expect_true(state$skip_phenotype_improvements)
+})
+
+testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and generates scripts", {
+  fixture_dir <- tempfile("cohort-method-no-ai-fixtures-")
+  dir.create(fixture_dir, recursive = TRUE)
+  target_path <- write_shell_circe_fixture(file.path(fixture_dir, "target.json"), 711L, "ACE inhibitor")
+  comparator_path <- write_shell_circe_fixture(file.path(fixture_dir, "comparator.json"), 712L, "Statins")
+  outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 713L, "Heart failure")
+  output_dir <- file.path(fixture_dir, "workflow")
+  transcript <- new_shell_transcript(c(
+    "", "ACE inhibitor", "Statins", "Heart failure", "", "", "file", target_path,
+    "n", "", "file", comparator_path, "", "file", outcome_path, rep("", 24L)
+  ))
+  no_acp_call <- function(...) stop("ACP must not be called when aiSupport is disabled.")
+
+  result <- runStrategusCohortMethodsShell(
+    outputDir = output_dir, interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = transcript$readline,
+    acpFlowCaller = no_acp_call
+  )
+
+  testthat::expect_true(transcript$expect_complete())
+  testthat::expect_true(file.exists(file.path(output_dir, "selected-target-cohorts", "711.json")))
+  testthat::expect_true(file.exists(file.path(output_dir, "selected-comparator-cohorts", "712.json")))
+  testthat::expect_true(file.exists(file.path(output_dir, "selected-outcome-cohorts", "713.json")))
+  state <- jsonlite::read_json(file.path(output_dir, "outputs", "study_agent_state.json"), simplifyVector = FALSE)
+  testthat::expect_true(file.exists(state$manual_inputs_path))
+  testthat::expect_true(file.exists(file.path(output_dir, "scripts", "03_generate_cohorts.R")))
+  testthat::expect_true(file.exists(file.path(output_dir, "scripts", "07_cm_spec.R")))
+  testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
+  testthat::expect_true(state$skip_phenotype_improvements)
+  testthat::expect_identical(state$analytic_settings_mode, "step_by_step")
+  testthat::expect_true(isTRUE(state$analytic_settings_confirmed))
+})
+
+testthat::test_that("AI-enabled incidence ACP failures are safe", {
+  transcript <- new_shell_transcript(c("", "ACE inhibitor", "Cough", "", "ai"))
+  result <- tryCatch(
+    runStrategusIncidenceShell(
+      outputDir = (output_dir <- tempfile("incidence-acp-failure-")),
+      interactive = TRUE, showBanner = FALSE, checkRuntime = FALSE,
+      aiSupport = "enabled", inputProvider = transcript$readline,
+      acpFlowCaller = function(...) stop("embedding provider connection refused")
+    ),
+    error = identity
+  )
+  testthat::expect_s3_class(result, "study_agent_acp_failure")
+  testthat::expect_match(conditionMessage(result), "contact the ACP service administrator", fixed = TRUE)
+  testthat::expect_false(grepl("embedding provider", conditionMessage(result), fixed = TRUE))
+})
+
+testthat::test_that("AI-enabled CohortMethod ACP failures are safe", {
+  transcript <- new_shell_transcript(c("compare ACE inhibitors with statins for heart failure", ""))
+  result <- tryCatch(
+    runStrategusCohortMethodsShell(
+      outputDir = tempfile("cohort-method-acp-failure-"),
+      studyIntent = "compare ACE inhibitors with statins for heart failure",
+      interactive = TRUE, showBanner = FALSE, checkRuntime = FALSE,
+      aiSupport = "enabled", inputProvider = transcript$readline,
+      acpFlowCaller = function(...) stop("embedding provider connection refused")
+    ),
+    error = identity
+  )
+  testthat::expect_s3_class(result, "study_agent_acp_failure")
+  testthat::expect_match(conditionMessage(result), "contact the ACP service administrator", fixed = TRUE)
+  testthat::expect_false(grepl("embedding provider", conditionMessage(result), fixed = TRUE))
+})

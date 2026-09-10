@@ -1698,12 +1698,11 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     build_stage_context = build_workflow_stage_context,
     call_dialogue = function(stage_context, message) {
       if (!isTRUE(ai_enabled)) stop(.studyAgentSlashAiSupportDisabledMessage(ai_support, "/ohdsi guidance"))
-      if (is.function(acpFlowCaller)) return(acpFlowCaller(flow_name = "workflow_context_dialogue", body = list(stage_context = stage_context, message = message), url = acpUrl))
-      if (!ensure_workflow_dialogue_client(acpUrl)) {
-        stop("ACP bridge unavailable. Connect ACP before using /ohdsi.")
-      }
       message("Calling ACP flow: workflow_context_dialogue")
-      .studyAgentSlashWorkflowContextDialogue(dialogue_acp_client$client, stage_context, message)
+      tryCatch(
+        call_shell_acp_flow("workflow_context_dialogue", list(stage_context = stage_context, message = message)),
+        error = function(e) .studyAgentSlashStopForAcpFailure(e, "workflow_context_dialogue")
+      )
     },
     empty_question_message = "Enter a question after /ohdsi. Example: /ohdsi why is washout important here?",
     disabled_command_message = if (!isTRUE(ai_enabled)) "The /ohdsi command is disabled for this no-AI workflow. Use h or help for local guidance." else NULL
@@ -2555,7 +2554,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     if (!acp_client_is_ready(dialogue_acp_client$client)) {
       if (!ensure_workflow_dialogue_client(url)) stop("ACP bridge unavailable.")
     }
-    .studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body)
+    .studyAgentSlashValidateAcpResponse(.studyAgentSlashCallAcpFlow(dialogue_acp_client$client, flow_name = flow_name, body = body), flow_name)
   }
 
   collect_recommendation_selection <- function(recommendations, role_label, statement, workflow_type, allow_multiple = FALSE) {
@@ -2773,7 +2772,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         workflow_type = workflow_type, exclude_metadata = exclude_metadata)
       message(sprintf("Calling ACP flow: phenotype_recommendation (%s)", role_key))
       recommendation_response <- tryCatch(call_shell_acp_flow("phenotype_recommendation", body),
-        error = function(e) list(status = "error", error = conditionMessage(e)))
+        error = function(e) .studyAgentSlashStopForAcpFailure(e, "phenotype_recommendation"))
       write_recommendation(recommendation_response, output_path)
     }
 
@@ -2812,7 +2811,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
             exclude_metadata = exclude_metadata)
           message(sprintf("Calling ACP flow: phenotype_recommendation (%s window 2)", role_key))
           recommendation_response <- tryCatch(call_shell_acp_flow("phenotype_recommendation", body),
-            error = function(e) list(status = "error", error = conditionMessage(e)))
+            error = function(e) .studyAgentSlashStopForAcpFailure(e, "phenotype_recommendation"))
           write_recommendation(recommendation_response, recommendation_path)
           recommendations_core <- recommendation_response$recommendations %||% recommendation_response
           recommendations <- recommendations_core$phenotype_recommendations %||% list()
@@ -2829,7 +2828,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
           used_advice <- TRUE
           message(sprintf("Calling ACP flow: phenotype_recommendation_advice (%s)", role_key))
           advice <- tryCatch(call_shell_acp_flow("phenotype_recommendation_advice", list(study_intent = statement)),
-            error = function(e) list(status = "error", error = conditionMessage(e)))
+            error = function(e) .studyAgentSlashStopForAcpFailure(e, "phenotype_recommendation_advice"))
           advice_core <- advice$advice %||% advice
           cat("\n== Advisory guidance ==\n")
           cat(advice_core$advice %||% "", "\n")
@@ -3072,17 +3071,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
         flow_called <- TRUE
         response_by_id[[as.character(cid)]] <- tryCatch(
           call_shell_acp_flow("phenotype_improvements", body),
-          error = function(e) {
-            err <- list(
-              status = "error",
-              error = conditionMessage(e),
-              flow = "phenotype_improvements",
-              role = role_key,
-              cohort_id = as.integer(cid)
-            )
-            errors[[as.character(cid)]] <<- err
-            err
-          }
+          error = function(e) .studyAgentSlashStopForAcpFailure(e, "phenotype_improvements")
         )
       }
       response_with_meta <- c(list(`_meta` = expected_meta), response_by_id)
@@ -3961,6 +3950,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
     response <- tryCatch(
       call_shell_acp_flow(flow_name, body, url = acp_url),
       error = function(e) {
+        .studyAgentSlashStopForAcpFailure(e, flow_name)
         list(
           flow = flow_name,
           source = "stub_acp_placeholder",
@@ -5048,9 +5038,7 @@ Available exploration commands
       }
       cohort_methods_intent_split_response <- tryCatch(
         call_shell_acp_flow("cohort_methods_intent_split", list(study_intent = studyIntent)),
-        error = function(e) {
-          list(status = "error", error = conditionMessage(e))
-        }
+        error = function(e) .studyAgentSlashStopForAcpFailure(e, "cohort_methods_intent_split")
       )
       write_json(cohort_methods_intent_split_response, cohort_methods_intent_split_path)
       cohort_methods_intent_split_source <- "acp_flow"
