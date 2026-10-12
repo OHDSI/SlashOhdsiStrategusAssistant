@@ -2502,7 +2502,9 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       outcome_statement = outcome_statement,
       generated_from_role_statements = TRUE
     ))
-    entered <- readline_with_navigation(sprintf("Study intent derived from cohort statements [%s]: ", template_intent))
+    cat("\nStudy intent derived from cohort statements:\n")
+    cat(sprintf("  %s\n", template_intent))
+    entered <- readline_with_navigation("Press Enter to accept, or type a revised study intent:\n> ")
     if (is_back_signal(entered)) return(entered)
     entered <- trimws(as.character(entered %||% ""))
     if (nzchar(entered)) entered else template_intent
