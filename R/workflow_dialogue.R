@@ -59,22 +59,34 @@ workflow_dialogue_prompt_width <- function() {
   as.integer(min(widths))
 }
 
+workflow_dialogue_input_marker <- function() {
+  "ohdsi> "
+}
+
+.studyAgentSlashShellQuit <- function() {
+  stop(structure(
+    list(message = "Study Agent shell exited by user."),
+    class = c("study_agent_shell_quit", "error", "condition")
+  ))
+}
+
 wrap_workflow_dialogue_prompt <- function(prompt) {
   prompt <- as.character(prompt %||% "")
   if (!nzchar(prompt)) return(prompt)
   trailing_space <- grepl("[[:space:]]$", prompt)
-  segments <- strsplit(gsub("", "", prompt), "
-", fixed = TRUE)[[1]]
+  segments <- strsplit(gsub("\r", "", prompt), "\n", fixed = TRUE)[[1]]
   width <- workflow_dialogue_prompt_width()
   wrapped_segments <- vapply(segments, function(segment) {
     if (!nzchar(segment)) return("")
-    paste(strwrap(segment, width = width, exdent = 2), collapse = "
-")
+    paste(strwrap(segment, width = width, exdent = 2), collapse = "\n")
   }, character(1))
-  wrapped <- paste(wrapped_segments, collapse = "
-")
+  wrapped <- paste(wrapped_segments, collapse = "\n")
   if (isTRUE(trailing_space) && !grepl("[[:space:]]$", wrapped)) {
     wrapped <- paste0(wrapped, " ")
+  }
+  has_input_line <- grepl("(^|\n)ohdsi>[[:space:]]*$", wrapped)
+  if (!isTRUE(has_input_line)) {
+    wrapped <- paste0(sub("[[:space:]]+$", "", wrapped), "\n", workflow_dialogue_input_marker())
   }
   wrapped
 }
@@ -176,6 +188,9 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
 
   handle_command <- function(entered) {
     trimmed <- trimws(as.character(entered %||% ""))
+      if (identical(trimmed, "/quit")) {
+        .studyAgentSlashShellQuit()
+      }
     if (!isTRUE(interactive) || !startsWith(trimmed, command_prefix)) {
       return(list(handled = FALSE, value = entered))
     }

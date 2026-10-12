@@ -38,6 +38,34 @@ testthat::test_that("slash guidance and deferred back re-prompt an atomic wizard
   testthat::expect_length(transcript$prompts(), 3L)
   testthat::expect_true(transcript$expect_complete())
 })
+testthat::test_that("multiline workflow prompts reserve a separate input line", {
+  previous <- options(studyAgent.promptWidth = 32L)
+  on.exit(options(previous), add = TRUE)
+
+  wrapped <- wrap_workflow_dialogue_prompt(
+    "Source for target cohort [ai=agentic search (default), create=new definition, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: "
+  )
+  testthat::expect_true(endsWith(wrapped, "\nohdsi> "))
+  testthat::expect_gt(length(strsplit(wrapped, "\n", fixed = TRUE)[[1]]), 2L)
+  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue: "), "Continue:\nohdsi> ")
+  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue:\nohdsi> "), "Continue:\nohdsi> ")
+})
+
+testthat::test_that("slash quit returns either workflow shell to R", {
+  input_provider <- function(prompt) "/quit"
+  incidence <- runStrategusIncidenceShell(
+    outputDir = tempfile("incidence-quit-"), interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = input_provider
+  )
+  cohort_methods <- runStrategusCohortMethodsShell(
+    outputDir = tempfile("cohort-methods-quit-"), interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = input_provider
+  )
+  testthat::expect_identical(incidence$status, "quit")
+  testthat::expect_identical(cohort_methods$status, "quit")
+})
+
+
 testthat::test_that("fixed-width renderer removes Markdown table delimiters", {
   markdown <- paste(
     "### Concept set",
