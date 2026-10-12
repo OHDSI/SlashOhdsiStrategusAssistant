@@ -63,6 +63,19 @@ workflow_dialogue_input_marker <- function() {
   "ohdsi> "
 }
 
+workflow_dialogue_prompt_layout <- function() {
+  configured <- getOption("studyAgent.promptLayout", Sys.getenv("STUDY_AGENT_PROMPT_LAYOUT", "rstudio"))
+  layout <- tolower(trimws(as.character(configured %||% "rstudio")[[1]]))
+  if (identical(layout, "auto")) {
+    layout <- if (identical(Sys.getenv("RSTUDIO"), "1")) "rstudio" else "terminal"
+  }
+  if (!layout %in% c("rstudio", "terminal")) {
+    warning("Unknown Study Agent prompt layout; using 'rstudio'.")
+    layout <- "rstudio"
+  }
+  layout
+}
+
 .studyAgentSlashShellQuit <- function() {
   stop(structure(
     list(message = "Study Agent shell exited by user."),
@@ -86,7 +99,12 @@ wrap_workflow_dialogue_prompt <- function(prompt) {
   }
   has_input_line <- grepl("(^|\n)ohdsi>[[:space:]]*$", wrapped)
   if (!isTRUE(has_input_line)) {
-    wrapped <- paste0(sub("[[:space:]]+$", "", wrapped), "\n", workflow_dialogue_input_marker())
+    wrapped <- sub("[[:space:]]+$", "", wrapped)
+    if (identical(workflow_dialogue_prompt_layout(), "rstudio")) {
+      wrapped <- paste0(workflow_dialogue_input_marker(), "\n", wrapped)
+    } else {
+      wrapped <- paste0(wrapped, "\n", workflow_dialogue_input_marker())
+    }
   }
   wrapped
 }

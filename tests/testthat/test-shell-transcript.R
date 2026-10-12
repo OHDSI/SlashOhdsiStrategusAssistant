@@ -1,3 +1,4 @@
+options(studyAgent.promptLayout = "terminal")
 testthat::test_that("scripted dialogue input preserves back navigation", {
   transcript <- new_shell_transcript(c("/back", "answer"))
   session <- new_workflow_dialogue_session(
@@ -39,7 +40,7 @@ testthat::test_that("slash guidance and deferred back re-prompt an atomic wizard
   testthat::expect_true(transcript$expect_complete())
 })
 testthat::test_that("multiline workflow prompts reserve a separate input line", {
-  previous <- options(studyAgent.promptWidth = 32L)
+  previous <- options(studyAgent.promptWidth = 32L, studyAgent.promptLayout = "terminal")
   on.exit(options(previous), add = TRUE)
 
   wrapped <- wrap_workflow_dialogue_prompt(
@@ -50,6 +51,26 @@ testthat::test_that("multiline workflow prompts reserve a separate input line", 
   testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue: "), "Continue:\nohdsi> ")
   testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue:\nohdsi> "), "Continue:\nohdsi> ")
 })
+testthat::test_that("RStudio prompts put the shell marker first", {
+  previous <- options(studyAgent.promptLayout = "rstudio")
+  on.exit(options(previous), add = TRUE)
+
+  testthat::expect_identical(
+    wrap_workflow_dialogue_prompt("Choose a cohort source: "),
+    "ohdsi> \nChoose a cohort source:"
+  )
+})
+
+testthat::test_that("terminal prompts put the shell marker after the question", {
+  previous <- options(studyAgent.promptLayout = "terminal")
+  on.exit(options(previous), add = TRUE)
+
+  testthat::expect_identical(
+    wrap_workflow_dialogue_prompt("Choose a cohort source: "),
+    "Choose a cohort source:\nohdsi> "
+  )
+})
+
 
 testthat::test_that("slash quit returns either workflow shell to R", {
   input_provider <- function(prompt) "/quit"
