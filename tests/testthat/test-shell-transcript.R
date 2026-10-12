@@ -482,6 +482,48 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   testthat::expect_true(isTRUE(state$analytic_settings_confirmed))
 })
 
+testthat::test_that("CohortMethod analytic-settings back restarts the settings stage", {
+  fixture_dir <- tempfile("cohort-method-analytic-back-")
+  dir.create(fixture_dir, recursive = TRUE)
+  target_path <- write_shell_circe_fixture(file.path(fixture_dir, "target.json"), 721L, "ACE inhibitor")
+  comparator_path <- write_shell_circe_fixture(file.path(fixture_dir, "comparator.json"), 722L, "Statins")
+  outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 723L, "Heart failure")
+  prompts <- character(0)
+  back_sent <- FALSE
+  input_provider <- function(prompt) {
+    prompts <<- c(prompts, prompt)
+    if (grepl("^Target statement", prompt)) return("ACE inhibitor")
+    if (grepl("^Comparator statement", prompt)) return("Statins")
+    if (grepl("^Outcome statement", prompt)) return("Heart failure")
+    if (grepl("^Source for target cohort", prompt)) return("file")
+    if (grepl("^Source for comparator cohort", prompt)) return("file")
+    if (grepl("^Source for outcome cohort", prompt)) return("file")
+    if (grepl("^Path to target cohort JSON file", prompt)) return(target_path)
+    if (grepl("^Path to comparator cohort JSON file", prompt)) return(comparator_path)
+    if (grepl("^Path to outcome cohort JSON file", prompt)) return(outcome_path)
+    if (grepl("^Study start date", prompt)) {
+      if (!back_sent) {
+        back_sent <<- TRUE
+        return("/back")
+      }
+      stop("analytic-settings stage restarted")
+    }
+    ""
+  }
+
+  testthat::expect_error(
+    runStrategusCohortMethodsShell(
+      outputDir = file.path(fixture_dir, "workflow"), interactive = TRUE,
+      showBanner = FALSE, checkRuntime = FALSE, aiSupport = "disabled",
+      inputProvider = input_provider,
+      acpFlowCaller = function(...) stop("ACP must not be called when aiSupport is disabled.")
+    ),
+    "analytic-settings stage restarted"
+  )
+  testthat::expect_true(back_sent)
+  testthat::expect_equal(sum(grepl("^Study start date", prompts)), 2L)
+})
+
 testthat::test_that("AI-enabled incidence ACP failures are safe", {
   transcript <- new_shell_transcript(c("", "ACE inhibitor", "Cough", "", "ai"))
   result <- tryCatch(

@@ -6052,6 +6052,10 @@ Available exploration commands
     )
   )
 
+  # Keep analytic-settings navigation self-contained. The cohort-selection
+  # stage has already completed here, so `/back` must restart this stage
+  # rather than attempt to continue a no-longer-active selection loop.
+  repeat {
   has_function_argument_description <- !is.null(analyticSettingsDescription) || !is.null(analytic_settings_description_path_resolved)
   cached_mode <- as.character(cached_inputs$analytic_settings_mode %||% if (has_function_argument_description) "free_text" else "step_by_step")
   analytic_settings_back_requested <- FALSE
@@ -6324,6 +6328,8 @@ Available exploration commands
       if (is_back_signal(gate)) next
       break
     }
+  }
+  break
   }
 
   effective_analytic_settings$customized_sections <- names(.studyAgentAnalyticSettingsSectionPaths())[vapply(
