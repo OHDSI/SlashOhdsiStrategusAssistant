@@ -320,6 +320,27 @@
     if (nzchar(as.character(urls$manifest %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$manifest, manifest)
   }
   .studyAgentSlashPmcSaveState(artifact_dir, role_label, narrative, scope, review, "awaiting_review", write_json)
+  atlas_review <- .studyAgentSlashAtlasAcceptedReview(artifact_dir, write_json)
+  if (identical(atlas_review$status %||% "", "accepted")) {
+    sets <- .studyAgentSlashPmcExternalSets(atlas_review$expression_path, narrative)
+    preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(
+      concept_set_name = set$name, concept_id = item$concept_id, concept_name = "Atlas accepted snapshot",
+      domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
+    .studyAgentSlashPmcPrintPreview(preview)
+    approval_path <- file.path(artifact_dir, "concept-set-approval.json")
+    write_json(list(
+      review_id = review$review_id %||% NULL,
+      source = "atlas_external_review",
+      atlas_review = atlas_review$handoff,
+      concept_sets = sets,
+      approval_preview = preview
+    ), approval_path)
+    cat(sprintf("Atlas accepted review revision %s (checksum %s). Exact policy object saved to %s.\n",
+      atlas_review$handoff$review_revision %||% "unknown",
+      atlas_review$handoff$expression_checksum %||% "unknown", approval_path))
+    return(.studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir,
+      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+  }
   cat(sprintf("\nReview state and frozen ACP artifacts are saved in %s.\n", artifact_dir))
   runs <- review$concept_provenance$search_runs %||% list()
   for (run in runs) cat(sprintf("- %s%s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", if (identical(run$candidate_kind %||% "", "classification_ancestor")) " [classification ancestor fallback; review only]" else "", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
@@ -331,7 +352,8 @@
     if (nzchar(expansion)) cat(sprintf("The current review is bounded. Use %s before downloading if you want more candidates.\n", expansion))
     cat(sprintf("CSV review writes %s and %s. Edit only review_* columns; use x for deliberate selections.\n", csv, manifest))
   }
-  action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
+  atlas_action <- !zero && .studyAgentSlashAtlasReviewConfigured()
+  action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [", if (atlas_action) "atlas=review in Atlas, " else "", "csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
   action <- tolower(prompt(action_prompt))
   if (is_back(action)) return(list(action = "retry"))
   request_expansion <- (identical(action, "full") && max_exact > 0L && max_exact <= 500L) || (identical(action, "max500") && max_exact > 500L)
@@ -349,6 +371,14 @@
       imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = TRUE))
   }
   if (identical(action, "later")) { download_review(); return(list(action = "retry")) }
+  if (identical(action, "atlas") && atlas_action) {
+    handoff <- .studyAgentSlashAtlasCreateReviewHandoff(role_label, narrative, scope, review, artifact_dir, write_json, prompt)
+    if (is.null(handoff)) return(list(action = "retry"))
+    cat("\nAtlas review request created. Open this URL in Atlas, curate and save the concept set, then resume this saved R review:\n")
+    cat(sprintf("%s\n", handoff$review_url))
+    cat("R will use only the immutable Atlas snapshot recorded after that save.\n")
+    return(list(action = "retry"))
+  }
   if (action %in% c("source", "scope", "")) return(list(action = "retry"))
   if (identical(action, "csv") && !zero) {
     if (as.integer(review$candidate_count %||% 0L) > 500L && !identical(prompt("This CSV has more than 500 candidates; Atlas is recommended. Download anyway [type DOWNLOAD]: "), "DOWNLOAD")) return(list(action = "retry"))
