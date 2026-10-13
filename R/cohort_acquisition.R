@@ -156,21 +156,25 @@
   is.null(raw_password) || !nzchar(user)
 }
 
-.studyAgentSlashChooseSelectionSourceMode <- function(role_label, allow_index = TRUE, interactive = TRUE, readline_with_navigation, is_back_signal) {
+.studyAgentSlashChooseSelectionSourceMode <- function(role_label, allow_index = TRUE, interactive = TRUE, readline_with_navigation, is_back_signal, resume_pending = FALSE) {
   if (!isTRUE(interactive)) {
     if (isTRUE(allow_index)) return("index")
     stop("Non-interactive direct cohort acquisition requires explicit source handling and is not implemented for this shell.")
   }
   repeat {
     prompt <- if (isTRUE(allow_index)) {
-      sprintf("Source for %s cohort [ai=agentic search (default), create=new definition, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
+      sprintf(
+        "Source for %s cohort [ai=agentic search (default), create=new definition%s, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ",
+        role_label,
+        if (isTRUE(resume_pending)) ", resume=resume saved review" else ""
+      )
     } else {
       sprintf("Source for %s cohort [pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
     }
     entered <- trimws(readline_with_navigation(prompt))
     if (is_back_signal(entered)) return(entered)
     lowered <- tolower(entered)
-    if (isTRUE(allow_index) && lowered %in% c("create", "new", "make", "computable")) return("create")
+    if (isTRUE(allow_index) && lowered %in% c("create", "new", "make", "computable", if (isTRUE(resume_pending)) "resume" else NULL)) return("create")
     if (isTRUE(allow_index) && (!nzchar(lowered) || lowered %in% c("ai", "index", "search", "s", "recommend", "agentic"))) return("index")
     if (lowered %in% c("db", "database", "existing")) return("database")
     if (lowered %in% c("pl", "phenotypelibrary", "phenotype_library", "library")) return("phenotype_library")

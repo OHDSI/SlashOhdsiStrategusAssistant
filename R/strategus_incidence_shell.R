@@ -47,6 +47,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
                                       checkRuntime = TRUE,
                                       inputProvider = readline,
                                       acpFlowCaller = NULL) {
+  tryCatch({
   execution_table_display <- .studyAgentSlashNormalizeExecutionTableDisplay(executionTableDisplay)
   ai_support <- .studyAgentSlashResolveAiSupport(aiSupport)
   if (!is.function(inputProvider)) stop("inputProvider must be a function.")
@@ -522,7 +523,8 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
       allow_index = allow_index,
       interactive = interactive,
       readline_with_navigation = readline_with_navigation,
-      is_back_signal = is_back_signal
+      is_back_signal = is_back_signal,
+      resume_pending = .studyAgentSlashPmcHasPendingReview(output_dir, role_label)
     )
   }
 
@@ -554,7 +556,9 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
       outcome_statement = outcome_statement,
       generated_from_role_statements = TRUE
     ))
-    entered <- readline_with_navigation(sprintf("Study intent derived from cohort statements [%s]: ", template_intent))
+    cat("\nStudy intent derived from cohort statements:\n")
+    cat(sprintf("  %s\n", template_intent))
+    entered <- readline_with_navigation("Press Enter to accept, or type a revised study intent:")
     if (is_back_signal(entered)) return(entered)
     entered <- trimws(as.character(entered %||% ""))
     if (nzchar(entered)) entered else template_intent
@@ -1329,6 +1333,7 @@ Available exploration commands
     } else {
       cat("Type /back at supported stage boundaries to return to the previous step.\n")
     }
+    cat("Type /quit at any prompt to return to the R console.\n")
   }
 
   if (isTRUE(resume) && file.exists(project_state_path) && file.exists(runtime_state_path)) {
@@ -3440,4 +3445,8 @@ Keeper review saved: %s reviewed row(s)
     project_state = project_state_path,
     runtime_state = runtime_state_path
   ))
+  }, study_agent_shell_quit = function(condition) {
+    message("Study Agent shell exited. Returning to the R prompt.")
+    invisible(list(status = "quit", output_dir = outputDir))
+  })
 }

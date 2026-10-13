@@ -1,3 +1,4 @@
+options(studyAgent.promptLayout = "terminal")
 testthat::test_that("scripted dialogue input preserves back navigation", {
   transcript <- new_shell_transcript(c("/back", "answer"))
   session <- new_workflow_dialogue_session(
@@ -38,6 +39,86 @@ testthat::test_that("slash guidance and deferred back re-prompt an atomic wizard
   testthat::expect_length(transcript$prompts(), 3L)
   testthat::expect_true(transcript$expect_complete())
 })
+testthat::test_that("workflow prompts use fixed-width visual framing", {
+  previous <- options(studyAgent.promptWidth = 32L, studyAgent.promptLayout = "rstudio")
+  on.exit(options(previous), add = TRUE)
+
+  wrapped <- wrap_workflow_dialogue_prompt(
+    "Source for target cohort [ai=agentic search (default), create=new definition, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: "
+  )
+  lines <- strsplit(wrapped, "\n", fixed = TRUE)[[1]]
+  testthat::expect_gt(length(lines), 2L)
+  testthat::expect_true(all(nchar(lines, type = "width") == 32L))
+  testthat::expect_true(all(endsWith(lines, "|")))
+  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue: "), "Continue                       |")
+  testthat::expect_identical(.studyAgentSlashWorkflowDialogueResponsePrompt(), "                      Response |")
+})
+
+
+testthat::test_that("long source prompts retain the entered response", {
+  prompts <- character()
+  framed <- utils::capture.output(
+    value <- .studyAgentSlashWorkflowDialogueReadInput(
+      input_provider = function(prompt) {
+        prompts <<- c(prompts, prompt)
+        "resume"
+      },
+      prompt = "Source for target cohort [ai=agentic search (default), create=new definition, resume=resume saved review, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ",
+      console_input = TRUE
+    )
+  )
+
+  testthat::expect_identical(value, "resume")
+  testthat::expect_length(prompts, 1L)
+  testthat::expect_true(endsWith(prompts[[1L]], "Response |"))
+  testthat::expect_identical(nchar(prompts[[1L]], type = "width"), workflow_dialogue_prompt_width())
+  testthat::expect_true(all(endsWith(framed, "|")))
+})
+
+
+testthat::test_that("terminal layout is honored at the first prompt in both shells", {
+  previous <- options(studyAgent.promptLayout = "terminal")
+  on.exit(options(previous), add = TRUE)
+
+  shell_cases <- list(
+    incidence = runStrategusIncidenceShell,
+    cohort_methods = runStrategusCohortMethodsShell
+  )
+  for (shell in shell_cases) {
+    prompts <- character()
+    result <- shell(
+      outputDir = tempfile("terminal-first-prompt-"),
+      interactive = TRUE,
+      showBanner = FALSE,
+      checkRuntime = FALSE,
+      aiSupport = "disabled",
+      inputProvider = function(prompt) {
+        prompts <<- c(prompts, prompt)
+        "/quit"
+      }
+    )
+    testthat::expect_identical(result$status, "quit")
+    testthat::expect_match(prompts[[1L]], "^Study intent", perl = TRUE)
+    testthat::expect_true(endsWith(prompts[[1L]], "|"))
+  }
+})
+
+
+testthat::test_that("slash quit returns either workflow shell to R", {
+  input_provider <- function(prompt) "/quit"
+  incidence <- runStrategusIncidenceShell(
+    outputDir = tempfile("incidence-quit-"), interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = input_provider
+  )
+  cohort_methods <- runStrategusCohortMethodsShell(
+    outputDir = tempfile("cohort-methods-quit-"), interactive = TRUE, showBanner = FALSE,
+    checkRuntime = FALSE, aiSupport = "disabled", inputProvider = input_provider
+  )
+  testthat::expect_identical(incidence$status, "quit")
+  testthat::expect_identical(cohort_methods$status, "quit")
+})
+
+
 testthat::test_that("fixed-width renderer removes Markdown table delimiters", {
   markdown <- paste(
     "### Concept set",
@@ -480,6 +561,48 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   testthat::expect_true(state$skip_phenotype_improvements)
   testthat::expect_identical(state$analytic_settings_mode, "step_by_step")
   testthat::expect_true(isTRUE(state$analytic_settings_confirmed))
+})
+
+testthat::test_that("CohortMethod analytic-settings back restarts the settings stage", {
+  fixture_dir <- tempfile("cohort-method-analytic-back-")
+  dir.create(fixture_dir, recursive = TRUE)
+  target_path <- write_shell_circe_fixture(file.path(fixture_dir, "target.json"), 721L, "ACE inhibitor")
+  comparator_path <- write_shell_circe_fixture(file.path(fixture_dir, "comparator.json"), 722L, "Statins")
+  outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 723L, "Heart failure")
+  prompts <- character(0)
+  back_sent <- FALSE
+  input_provider <- function(prompt) {
+    prompts <<- c(prompts, prompt)
+    if (grepl("^Target statement", prompt)) return("ACE inhibitor")
+    if (grepl("^Comparator statement", prompt)) return("Statins")
+    if (grepl("^Outcome statement", prompt)) return("Heart failure")
+    if (grepl("^Source for target cohort", prompt)) return("file")
+    if (grepl("^Source for comparator cohort", prompt)) return("file")
+    if (grepl("^Source for outcome cohort", prompt)) return("file")
+    if (grepl("^Path to target cohort JSON file", prompt)) return(target_path)
+    if (grepl("^Path to comparator cohort JSON file", prompt)) return(comparator_path)
+    if (grepl("^Path to outcome cohort JSON file", prompt)) return(outcome_path)
+    if (grepl("^Study start date", prompt)) {
+      if (!back_sent) {
+        back_sent <<- TRUE
+        return("/back")
+      }
+      stop("analytic-settings stage restarted")
+    }
+    ""
+  }
+
+  testthat::expect_error(
+    runStrategusCohortMethodsShell(
+      outputDir = file.path(fixture_dir, "workflow"), interactive = TRUE,
+      showBanner = FALSE, checkRuntime = FALSE, aiSupport = "disabled",
+      inputProvider = input_provider,
+      acpFlowCaller = function(...) stop("ACP must not be called when aiSupport is disabled.")
+    ),
+    "analytic-settings stage restarted"
+  )
+  testthat::expect_true(back_sent)
+  testthat::expect_equal(sum(grepl("^Study start date", prompts)), 2L)
 })
 
 testthat::test_that("AI-enabled incidence ACP failures are safe", {

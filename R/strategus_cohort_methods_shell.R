@@ -1654,6 +1654,7 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
                                            checkRuntime = TRUE,
                                            inputProvider = readline,
                                            acpFlowCaller = NULL) {
+  tryCatch({
   `%||%` <- function(x, y) if (is.null(x)) y else x
   execution_table_display <- .studyAgentSlashNormalizeExecutionTableDisplay(executionTableDisplay)
   ai_support <- .studyAgentSlashResolveAiSupport(aiSupport)
@@ -2502,7 +2503,9 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       outcome_statement = outcome_statement,
       generated_from_role_statements = TRUE
     ))
-    entered <- readline_with_navigation(sprintf("Study intent derived from cohort statements [%s]: ", template_intent))
+    cat("\nStudy intent derived from cohort statements:\n")
+    cat(sprintf("  %s\n", template_intent))
+    entered <- readline_with_navigation("Press Enter to accept, or type a revised study intent:")
     if (is_back_signal(entered)) return(entered)
     entered <- trimws(as.character(entered %||% ""))
     if (nzchar(entered)) entered else template_intent
@@ -2896,7 +2899,8 @@ runStrategusCohortMethodsShell <- function(outputDir = "demo-strategus-cohort-me
       allow_index = allow_index,
       interactive = interactive,
       readline_with_navigation = readline_with_navigation,
-      is_back_signal = is_back_signal
+      is_back_signal = is_back_signal,
+      resume_pending = .studyAgentSlashPmcHasPendingReview(output_dir, role_label)
     )
   }
 
@@ -4703,6 +4707,7 @@ Available exploration commands
     } else {
       cat("Type /back at supported stage boundaries to return to the previous step.\n")
     }
+    cat("Type /quit at any prompt to return to the R console.\n")
   }
 
   if (isTRUE(resume) && file.exists(project_state_path) && file.exists(runtime_state_path)) {
@@ -6052,6 +6057,10 @@ Available exploration commands
     )
   )
 
+  # Keep analytic-settings navigation self-contained. The cohort-selection
+  # stage has already completed here, so `/back` must restart this stage
+  # rather than attempt to continue a no-longer-active selection loop.
+  repeat {
   has_function_argument_description <- !is.null(analyticSettingsDescription) || !is.null(analytic_settings_description_path_resolved)
   cached_mode <- as.character(cached_inputs$analytic_settings_mode %||% if (has_function_argument_description) "free_text" else "step_by_step")
   analytic_settings_back_requested <- FALSE
@@ -6324,6 +6333,8 @@ Available exploration commands
       if (is_back_signal(gate)) next
       break
     }
+  }
+  break
   }
 
   effective_analytic_settings$customized_sections <- names(.studyAgentAnalyticSettingsSectionPaths())[vapply(
@@ -8203,4 +8214,8 @@ Keeper review saved: %s reviewed row(s)
     project_state = project_state_path,
     runtime_state = runtime_state_path
   ))
+  }, study_agent_shell_quit = function(condition) {
+    message("Study Agent shell exited. Returning to the R prompt.")
+    invisible(list(status = "quit", output_dir = outputDir))
+  })
 }

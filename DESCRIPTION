@@ -8,18 +8,18 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.4.0)
 Imports:
-    Characterization (>= 4.0.0),
+    Characterization (>= 4.1.0),
     CohortDiagnostics (>= 3.4.2),
     CohortGenerator (>= 1.1.1),
-    CohortIncidence (>= 4.1.1),
+    CohortIncidence (>= 4.2.0),
     CohortMethod (>= 6.0.3),
     Cyclops (>= 3.7.1),
-    DatabaseConnector (>= 7.2.0),
+    DatabaseConnector (>= 8.0.0),
     dplyr,
-    FeatureExtraction (>= 3.13.0),
+    FeatureExtraction (>= 3.14.0),
     jsonlite,
     ParallelLogger (>= 3.5.1),
-    Strategus (>= 1.5.0),
+    Strategus (>= 1.6.0),
     utils
 Suggests:
     PhenotypeLibrary,

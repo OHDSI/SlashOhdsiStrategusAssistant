@@ -59,24 +59,55 @@ workflow_dialogue_prompt_width <- function() {
   as.integer(min(widths))
 }
 
-wrap_workflow_dialogue_prompt <- function(prompt) {
-  prompt <- as.character(prompt %||% "")
-  if (!nzchar(prompt)) return(prompt)
-  trailing_space <- grepl("[[:space:]]$", prompt)
-  segments <- strsplit(gsub("", "", prompt), "
-", fixed = TRUE)[[1]]
-  width <- workflow_dialogue_prompt_width()
-  wrapped_segments <- vapply(segments, function(segment) {
-    if (!nzchar(segment)) return("")
-    paste(strwrap(segment, width = width, exdent = 2), collapse = "
-")
-  }, character(1))
-  wrapped <- paste(wrapped_segments, collapse = "
-")
-  if (isTRUE(trailing_space) && !grepl("[[:space:]]$", wrapped)) {
-    wrapped <- paste0(wrapped, " ")
+# Prompt framing is intentionally transport-neutral. RStudio, ESS, and terminal
+# consoles see the explanatory text before a single ordinary readline prompt.
+# Supplying a multi-line string *to* readline is not portable: some frontends
+# attach typed text to an earlier physical row and submit an empty response.
+workflow_dialogue_prompt_layout <- function() {
+  configured <- getOption("studyAgent.promptLayout", Sys.getenv("STUDY_AGENT_PROMPT_LAYOUT", "rstudio"))
+  layout <- tolower(trimws(as.character(configured %||% "rstudio")[[1]]))
+  if (identical(layout, "auto")) {
+    layout <- if (identical(Sys.getenv("RSTUDIO"), "1")) "rstudio" else "terminal"
   }
-  wrapped
+  if (!layout %in% c("rstudio", "terminal")) {
+    warning("Unknown Study Agent prompt layout; using 'rstudio'.")
+    layout <- "rstudio"
+  }
+  layout
+}
+
+.studyAgentSlashShellQuit <- function() {
+  stop(structure(
+    list(message = "Study Agent shell exited by user."),
+    class = c("study_agent_shell_quit", "error", "condition")
+  ))
+}
+
+wrap_workflow_dialogue_prompt <- function(prompt) {
+  prompt <- sub(":\\s*$", "", as.character(prompt %||% ""))
+  if (!nzchar(prompt)) return(prompt)
+  width <- workflow_dialogue_prompt_width()
+  content_width <- max(20L, width - 1L)
+  segments <- strsplit(gsub("\r", "", prompt), "\n", fixed = TRUE)[[1]]
+  lines <- unlist(lapply(segments, function(segment) {
+    if (!nzchar(segment)) return("")
+    strwrap(segment, width = content_width, exdent = 2L)
+  }), use.names = FALSE)
+  paste0(sprintf(paste0("%-", content_width, "s"), lines), "|", collapse = "\n")
+}
+
+.studyAgentSlashWorkflowDialogueResponsePrompt <- function() {
+  width <- workflow_dialogue_prompt_width()
+  content_width <- max(20L, width - 1L)
+  paste0(sprintf(paste0("%", content_width, "s"), "Response "), "|")
+}
+
+.studyAgentSlashWorkflowDialogueReadInput <- function(input_provider, prompt, console_input = identical(input_provider, readline)) {
+  if (!isTRUE(console_input)) {
+    return(input_provider(wrap_workflow_dialogue_prompt(prompt)))
+  }
+  cat(wrap_workflow_dialogue_prompt(prompt), "\n", sep = "")
+  input_provider(.studyAgentSlashWorkflowDialogueResponsePrompt())
 }
 
 render_workflow_dialogue_response <- function(response) {
@@ -153,6 +184,7 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
   if (!is.function(render_response)) stop("render_response must be a function.")
 
   dialogue_state <- new_workflow_dialogue_state()
+  console_input <- identical(input_provider, readline)
 
   ask_dialogue <- function(question, render = TRUE) {
     question <- trimws(as.character(question %||% ""))
@@ -176,6 +208,9 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
 
   handle_command <- function(entered) {
     trimmed <- trimws(as.character(entered %||% ""))
+      if (identical(trimmed, "/quit")) {
+        .studyAgentSlashShellQuit()
+      }
     if (!isTRUE(interactive) || !startsWith(trimmed, command_prefix)) {
       return(list(handled = FALSE, value = entered))
     }
@@ -198,7 +233,7 @@ new_workflow_dialogue_session <- function(interactive = TRUE,
   }
   readline_with_dialogue <- function(prompt, allow_back = FALSE, deferred_back_message = NULL) {
     repeat {
-      entered <- input_provider(wrap_workflow_dialogue_prompt(prompt))
+      entered <- .studyAgentSlashWorkflowDialogueReadInput(input_provider, prompt, console_input = console_input)
       trimmed <- trimws(as.character(entered %||% ""))
       if (identical(trimmed, "/back") && !is.null(deferred_back_message)) {
         cat(sprintf("%s\n", as.character(deferred_back_message)))

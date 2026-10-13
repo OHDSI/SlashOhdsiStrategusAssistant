@@ -95,6 +95,24 @@ test_that("local source identifiers include a content token", {
   expect_match(source_id, "^file:88:same-[a-f0-9]{12}$")
 })
 
+test_that("source selector offers resume for a pending concept review", {
+  prompts <- character()
+  choice <- slashOhdsiStrategusAssistant:::.studyAgentSlashChooseSelectionSourceMode(
+    role_label = "outcome",
+    allow_index = TRUE,
+    interactive = TRUE,
+    resume_pending = TRUE,
+    readline_with_navigation = function(prompt) {
+      prompts <<- c(prompts, prompt)
+      "resume"
+    },
+    is_back_signal = function(value) FALSE
+  )
+  expect_identical(choice, "create")
+  expect_match(prompts[[1L]], "resume=resume saved review", fixed = TRUE)
+})
+
+
 test_that("AI cohort source selector exposes reviewed phenotype creation", {
   choice <- slashOhdsiStrategusAssistant:::.studyAgentSlashChooseSelectionSourceMode(
     role_label = "target",

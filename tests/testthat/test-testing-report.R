@@ -1,6 +1,10 @@
 test_that("testing report renders conceptual coverage to Markdown", {
   path <- tempfile(fileext = ".md")
   project_path <- normalizePath(file.path(testthat::test_path(), "..", ".."), winslash = "/", mustWork = TRUE)
+  if (!file.exists(file.path(project_path, "DESCRIPTION"))) {
+      skip("strategusTestingReport requires a source package directory.")
+  }
+
   report <- strategusTestingReport(projectPath = project_path, outputFile = path, runTests = FALSE)
   expect_true(file.exists(path))
   expect_match(paste(report, collapse = "\\n"), "Harness coverage", fixed = TRUE)
