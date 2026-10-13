@@ -523,7 +523,8 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
       allow_index = allow_index,
       interactive = interactive,
       readline_with_navigation = readline_with_navigation,
-      is_back_signal = is_back_signal
+      is_back_signal = is_back_signal,
+      resume_pending = .studyAgentSlashPmcHasPendingReview(output_dir, role_label)
     )
   }
 
@@ -557,7 +558,7 @@ runStrategusIncidenceShell <- function(outputDir = "demo-strategus-cohort-incide
     ))
     cat("\nStudy intent derived from cohort statements:\n")
     cat(sprintf("  %s\n", template_intent))
-    entered <- readline_with_navigation("Press Enter to accept, or type a revised study intent:\nohdsi> ")
+    entered <- readline_with_navigation("Press Enter to accept, or type a revised study intent:")
     if (is_back_signal(entered)) return(entered)
     entered <- trimws(as.character(entered %||% ""))
     if (nzchar(entered)) entered else template_intent

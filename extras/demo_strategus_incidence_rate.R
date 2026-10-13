@@ -20,14 +20,22 @@ invisible(slashOhdsiAcpClient::acp_connect(url = acp_url))
 output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")
 
 # To start from scratch, uncomment the next line. It removes only this demo output.
-# unlink(output_dir, recursive = TRUE, force = TRUE)
+unlink(output_dir, recursive = TRUE, force = TRUE)
 
+## all three options are required for Atlas integration
+Sys.setenv(
+  STUDY_AGENT_WEBAPI_URL = "http://localhost:8080/WebAPI",
+  STUDY_AGENT_WEBAPI_API_KEY = "wa_f20ae9caa7dd91e1_-OLiQP_1bee1GisQIItx5hsx7CPo1UnrA7MDwYHn14A",
+  STUDY_AGENT_ATLAS_URL = "http://localhost:5173"
+)
+options(studyAgent.promptWidth = 62L)  # experiment with different settings
 slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
   outputDir = output_dir,
   acpUrl = acp_url,
   aiSupport = "enabled",
   bannerPath = banner_path,
-  showBanner = TRUE,
+  ##showBanner = TRUE,
+  showBanner = FALSE,
   executionTableDisplay = "console"
 )
 

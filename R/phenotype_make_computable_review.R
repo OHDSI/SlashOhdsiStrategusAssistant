@@ -2,6 +2,29 @@
 
 .studyAgentSlashPmcStatePath <- function(artifact_dir) file.path(artifact_dir, "review-state.json")
 
+.studyAgentSlashPmcHasPendingReview <- function(output_dir, role_label) {
+  artifact_dir <- file.path(output_dir, "phenotype-make-computable", tolower(role_label))
+  state_path <- .studyAgentSlashPmcStatePath(artifact_dir)
+  if (!file.exists(state_path)) return(FALSE)
+  state <- tryCatch(jsonlite::read_json(state_path, simplifyVector = FALSE), error = function(e) NULL)
+  is.list(state) && identical(as.character(state$status %||% ""), "awaiting_review")
+}
+
+.studyAgentSlashPmcReviewActionPrompt <- function(zero, atlas_action, expansion = "") {
+  if (isTRUE(zero)) {
+    return(paste0(
+      "Next [", if (isTRUE(atlas_action)) "atlas=review in Atlas, " else "",
+      "json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: "
+    ))
+  }
+  paste0(
+    "Review [", if (isTRUE(atlas_action)) "atlas=review in Atlas, " else "",
+    "csv=download/validate, later=download and resume later",
+    if (nzchar(expansion)) paste0(", ", expansion) else "",
+    ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: "
+  )
+}
+
 .studyAgentSlashPmcSaveState <- function(artifact_dir, role_label, narrative, scope, review, status, write_json) {
   write_json(list(schema_version = 1L, status = status, role_label = role_label,
     narrative_statement = narrative, scope = scope, review = review,
@@ -150,7 +173,14 @@
   list(review_id = review_id, csv = csv, manifest = manifest, candidate_count = nrow(rows), eligible_candidate_count = length(eligible_keys), atlas_exports = atlas_exports, atlas_recommendation = if (nrow(rows) > 500L) "required" else if (nrow(rows) > 100L) "strongly_recommended" else "optional")
 }
 
-.studyAgentSlashPmcExternalSets <- function(path, fallback_name) {
+.studyAgentSlashPmcScopeDomain <- function(scope) {
+  domains <- unlist(scope$criterion_domains %||% list(), use.names = FALSE)
+  domains <- unique(trimws(as.character(domains %||% character())))
+  domains <- domains[nzchar(domains)]
+  if (length(domains) == 1L) domains[[1]] else ""
+}
+
+.studyAgentSlashPmcExternalSets <- function(path, fallback_name, fallback_domain = "") {
   if (!file.exists(path)) stop(sprintf("Concept-set JSON was not found: %s", path))
   value <- jsonlite::read_json(path, simplifyVector = FALSE)
   direct <- value$concept_sets %||% NULL
@@ -160,7 +190,7 @@
   if (!is.list(atlas) || !length(atlas)) stop("JSON must contain ACP concept_sets, a bare Atlas items array, or an Atlas expression.items array.")
   items <- lapply(atlas, function(x) {
     concept <- x$concept %||% list(); id <- suppressWarnings(as.integer(x$concept_id %||% x$conceptId %||% concept$CONCEPT_ID %||% concept$conceptId))
-    domain <- as.character(x$domain %||% concept$DOMAIN_ID %||% concept$domainId %||% "")
+    domain <- as.character(x$domain %||% concept$DOMAIN_ID %||% concept$domainId %||% fallback_domain %||% "")
     if (is.na(id) || id <= 0L || !nzchar(domain)) stop("Every Atlas item needs a concept id and domain.")
     list(concept_id = id, domain = domain, include_descendants = isTRUE(x$includeDescendants %||% FALSE),
       include_mapped = isTRUE(x$includeMapped %||% FALSE), is_excluded = isTRUE(x$isExcluded %||% FALSE))
@@ -320,9 +350,13 @@
     if (nzchar(as.character(urls$manifest %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$manifest, manifest)
   }
   .studyAgentSlashPmcSaveState(artifact_dir, role_label, narrative, scope, review, "awaiting_review", write_json)
-  atlas_review <- .studyAgentSlashAtlasAcceptedReview(artifact_dir, write_json)
+  atlas_review <- .studyAgentSlashAtlasAcceptedReview(artifact_dir, write_json, review$review_id %||% "")
   if (identical(atlas_review$status %||% "", "accepted")) {
-    sets <- .studyAgentSlashPmcExternalSets(atlas_review$expression_path, narrative)
+    sets <- .studyAgentSlashPmcExternalSets(
+      atlas_review$expression_path,
+      narrative,
+      fallback_domain = .studyAgentSlashPmcScopeDomain(atlas_review$handoff$scope %||% list())
+    )
     preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(
       concept_set_name = set$name, concept_id = item$concept_id, concept_name = "Atlas accepted snapshot",
       domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
@@ -341,6 +375,9 @@
     return(.studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir,
       imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
   }
+  if (identical(atlas_review$status %||% "", "different_review")) {
+    cat("A completed Atlas review belongs to an earlier R review and will not be reused for this new scope.\n")
+  }
   cat(sprintf("\nReview state and frozen ACP artifacts are saved in %s.\n", artifact_dir))
   runs <- review$concept_provenance$search_runs %||% list()
   for (run in runs) cat(sprintf("- %s%s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", if (identical(run$candidate_kind %||% "", "classification_ancestor")) " [classification ancestor fallback; review only]" else "", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
@@ -352,8 +389,12 @@
     if (nzchar(expansion)) cat(sprintf("The current review is bounded. Use %s before downloading if you want more candidates.\n", expansion))
     cat(sprintf("CSV review writes %s and %s. Edit only review_* columns; use x for deliberate selections.\n", csv, manifest))
   }
-  atlas_action <- !zero && .studyAgentSlashAtlasReviewConfigured()
-  action_prompt <- if (zero) "Next [json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: " else paste0("Review [", if (atlas_action) "atlas=review in Atlas, " else "", "csv=download/validate, later=download and resume later", if (nzchar(expansion)) paste0(", ", expansion) else "", ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: ")
+  # Atlas remains a useful, explicitly reviewed fallback when the bounded R
+  # retrieval returned no candidates. The empty candidate slice only disables
+  # CSV review; it must not prevent the reviewer from searching the normal
+  # Atlas vocabulary explorer with the confirmed scope as guidance.
+  atlas_action <- .studyAgentSlashAtlasReviewConfigured()
+  action_prompt <- .studyAgentSlashPmcReviewActionPrompt(zero, atlas_action, expansion)
   action <- tolower(prompt(action_prompt))
   if (is_back(action)) return(list(action = "retry"))
   request_expansion <- (identical(action, "full") && max_exact > 0L && max_exact <= 500L) || (identical(action, "max500") && max_exact > 500L)
@@ -374,8 +415,9 @@
   if (identical(action, "atlas") && atlas_action) {
     handoff <- .studyAgentSlashAtlasCreateReviewHandoff(role_label, narrative, scope, review, artifact_dir, write_json, prompt)
     if (is.null(handoff)) return(list(action = "retry"))
-    cat("\nAtlas review request created. Open this URL in Atlas, curate and save the concept set, then resume this saved R review:\n")
+    cat("\nAtlas review request created. Open this URL in Atlas, curate and save the concept set:\n")
     cat(sprintf("%s\n", handoff$review_url))
+    cat(sprintf("After saving in Atlas, return here. At the Source for %s cohort prompt, type resume (or create), then choose resume at the saved-review prompt.\n", role_label))
     cat("R will use only the immutable Atlas snapshot recorded after that save.\n")
     return(list(action = "retry"))
   }

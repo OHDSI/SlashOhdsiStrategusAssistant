@@ -58,10 +58,19 @@
   name <- trimws(as.character(prompt(sprintf("Name for the Atlas concept set [%s]: ", default_name)) %||% ""))
   if (!nzchar(name)) name <- default_name
   if (!identical(prompt("Create this empty Atlas concept set and open it for review [type ATLAS]: "), "ATLAS")) return(NULL)
-  created <- .studyAgentSlashAtlasWebApiRequest(config, "POST", "/conceptset", list(
-    name = name,
-    description = paste0("Review-gated concept-set draft from R phenotype_make_computable (", role_label, ").")
-  ))
+  create_description <- paste0("Review-gated concept-set draft from R phenotype_make_computable (", role_label, ").")
+  repeat {
+    created <- tryCatch(
+      .studyAgentSlashAtlasWebApiRequest(config, "POST", "/conceptset", list(name = name, description = create_description)),
+      error = function(error) error
+    )
+    if (!inherits(created, "error")) break
+    if (!grepl("HTTP 409", conditionMessage(created), fixed = TRUE)) stop(created)
+    cat(sprintf("An Atlas concept set named '%s' already exists. The shell will not reuse, modify, or overwrite it.\n", name))
+    name <- trimws(as.character(prompt("Enter a different Atlas concept-set name, or press Enter to return to review: ") %||% ""))
+    if (!nzchar(name)) return(NULL)
+    if (!identical(prompt("Create this empty Atlas concept set and open it for review [type ATLAS]: "), "ATLAS")) return(NULL)
+  }
   concept_set_id <- suppressWarnings(as.integer(created$id %||% NA_integer_))
   if (is.na(concept_set_id) || concept_set_id <= 0L) stop("Atlas/WebAPI did not return a concept-set identifier.")
   runs <- review$concept_provenance$search_runs %||% list()
@@ -108,11 +117,16 @@
   handoff
 }
 
-.studyAgentSlashAtlasAcceptedReview <- function(artifact_dir, write_json) {
+.studyAgentSlashAtlasAcceptedReview <- function(artifact_dir, write_json, expected_review_id = "") {
   handoff_path <- file.path(artifact_dir, "atlas-review-handoff.json")
   if (!file.exists(handoff_path)) return(NULL)
   handoff <- tryCatch(jsonlite::read_json(handoff_path, simplifyVector = FALSE), error = function(error) NULL)
   if (!is.list(handoff)) return(NULL)
+  expected_review_id <- trimws(as.character(expected_review_id %||% ""))
+  handoff_review_id <- trimws(as.character(handoff$review_id %||% ""))
+  if (nzchar(expected_review_id) && !identical(handoff_review_id, expected_review_id)) {
+    return(list(status = "different_review", handoff = handoff))
+  }
   config <- .studyAgentSlashAtlasReviewConfig()
   if (!.studyAgentSlashAtlasReviewConfigured(config)) return(list(status = "configuration_required", handoff = handoff))
   session_id <- as.character(handoff$external_review_session_id %||% "")

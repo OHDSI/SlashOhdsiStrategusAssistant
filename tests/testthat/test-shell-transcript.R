@@ -39,36 +39,68 @@ testthat::test_that("slash guidance and deferred back re-prompt an atomic wizard
   testthat::expect_length(transcript$prompts(), 3L)
   testthat::expect_true(transcript$expect_complete())
 })
-testthat::test_that("multiline workflow prompts reserve a separate input line", {
-  previous <- options(studyAgent.promptWidth = 32L, studyAgent.promptLayout = "terminal")
+testthat::test_that("workflow prompts use fixed-width visual framing", {
+  previous <- options(studyAgent.promptWidth = 32L, studyAgent.promptLayout = "rstudio")
   on.exit(options(previous), add = TRUE)
 
   wrapped <- wrap_workflow_dialogue_prompt(
     "Source for target cohort [ai=agentic search (default), create=new definition, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: "
   )
-  testthat::expect_true(endsWith(wrapped, "\nohdsi> "))
-  testthat::expect_gt(length(strsplit(wrapped, "\n", fixed = TRUE)[[1]]), 2L)
-  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue: "), "Continue:\nohdsi> ")
-  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue:\nohdsi> "), "Continue:\nohdsi> ")
+  lines <- strsplit(wrapped, "\n", fixed = TRUE)[[1]]
+  testthat::expect_gt(length(lines), 2L)
+  testthat::expect_true(all(nchar(lines, type = "width") == 32L))
+  testthat::expect_true(all(endsWith(lines, "|")))
+  testthat::expect_identical(wrap_workflow_dialogue_prompt("Continue: "), "Continue                       |")
+  testthat::expect_identical(.studyAgentSlashWorkflowDialogueResponsePrompt(), "                      Response |")
 })
-testthat::test_that("RStudio prompts put the shell marker first", {
-  previous <- options(studyAgent.promptLayout = "rstudio")
-  on.exit(options(previous), add = TRUE)
 
-  testthat::expect_identical(
-    wrap_workflow_dialogue_prompt("Choose a cohort source: "),
-    "ohdsi> \nChoose a cohort source:"
+
+testthat::test_that("long source prompts retain the entered response", {
+  prompts <- character()
+  framed <- utils::capture.output(
+    value <- .studyAgentSlashWorkflowDialogueReadInput(
+      input_provider = function(prompt) {
+        prompts <<- c(prompts, prompt)
+        "resume"
+      },
+      prompt = "Source for target cohort [ai=agentic search (default), create=new definition, resume=resume saved review, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ",
+      console_input = TRUE
+    )
   )
+
+  testthat::expect_identical(value, "resume")
+  testthat::expect_length(prompts, 1L)
+  testthat::expect_true(endsWith(prompts[[1L]], "Response |"))
+  testthat::expect_identical(nchar(prompts[[1L]], type = "width"), workflow_dialogue_prompt_width())
+  testthat::expect_true(all(endsWith(framed, "|")))
 })
 
-testthat::test_that("terminal prompts put the shell marker after the question", {
+
+testthat::test_that("terminal layout is honored at the first prompt in both shells", {
   previous <- options(studyAgent.promptLayout = "terminal")
   on.exit(options(previous), add = TRUE)
 
-  testthat::expect_identical(
-    wrap_workflow_dialogue_prompt("Choose a cohort source: "),
-    "Choose a cohort source:\nohdsi> "
+  shell_cases <- list(
+    incidence = runStrategusIncidenceShell,
+    cohort_methods = runStrategusCohortMethodsShell
   )
+  for (shell in shell_cases) {
+    prompts <- character()
+    result <- shell(
+      outputDir = tempfile("terminal-first-prompt-"),
+      interactive = TRUE,
+      showBanner = FALSE,
+      checkRuntime = FALSE,
+      aiSupport = "disabled",
+      inputProvider = function(prompt) {
+        prompts <<- c(prompts, prompt)
+        "/quit"
+      }
+    )
+    testthat::expect_identical(result$status, "quit")
+    testthat::expect_match(prompts[[1L]], "^Study intent", perl = TRUE)
+    testthat::expect_true(endsWith(prompts[[1L]], "|"))
+  }
 })
 
 
