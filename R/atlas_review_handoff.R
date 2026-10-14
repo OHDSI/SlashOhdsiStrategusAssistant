@@ -57,7 +57,11 @@
   default_name <- paste0("R review: ", narrative)
   name <- trimws(as.character(prompt(sprintf("Name for the Atlas concept set [%s]: ", default_name)) %||% ""))
   if (!nzchar(name)) name <- default_name
-  if (!identical(prompt("Create this empty Atlas concept set and open it for review [type ATLAS]: "), "ATLAS")) return(NULL)
+  confirm_create <- function() {
+    answer <- tolower(trimws(as.character(prompt("Create an empty Atlas concept set and open it for review? [Y/n] (n returns to review options): ") %||% "")))
+    answer %in% c("", "y", "yes", "atlas")
+  }
+  if (!confirm_create()) return(NULL)
   create_description <- paste0("Review-gated concept-set draft from R phenotype_make_computable (", role_label, ").")
   repeat {
     created <- tryCatch(
@@ -69,7 +73,7 @@
     cat(sprintf("An Atlas concept set named '%s' already exists. The shell will not reuse, modify, or overwrite it.\n", name))
     name <- trimws(as.character(prompt("Enter a different Atlas concept-set name, or press Enter to return to review: ") %||% ""))
     if (!nzchar(name)) return(NULL)
-    if (!identical(prompt("Create this empty Atlas concept set and open it for review [type ATLAS]: "), "ATLAS")) return(NULL)
+    if (!confirm_create()) return(NULL)
   }
   concept_set_id <- suppressWarnings(as.integer(created$id %||% NA_integer_))
   if (is.na(concept_set_id) || concept_set_id <= 0L) stop("Atlas/WebAPI did not return a concept-set identifier.")

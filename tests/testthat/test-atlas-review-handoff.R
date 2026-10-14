@@ -136,14 +136,14 @@ test_that("Atlas snapshot uses its reviewed scope domain and ignores a stale han
 test_that("zero-candidate review retains the configured Atlas handoff", {
   expect_match(
     .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE),
-    "atlas=review in Atlas",
+    "`atlas`    Review in Atlas vocabulary search",
     fixed = TRUE
   )
   expect_false(grepl("csv=", .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE), fixed = TRUE))
   expect_false(grepl("atlas=", .studyAgentSlashPmcReviewActionPrompt(TRUE, FALSE), fixed = TRUE))
   expect_match(
     .studyAgentSlashPmcReviewActionPrompt(FALSE, TRUE, "full=request complete available set"),
-    "csv=download/validate, later=download and resume later, full=request complete available set",
+    "`csv`      Download and validate the CSV review",
     fixed = TRUE
   )
 })

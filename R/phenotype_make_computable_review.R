@@ -13,16 +13,27 @@
 .studyAgentSlashPmcReviewActionPrompt <- function(zero, atlas_action, expansion = "") {
   if (isTRUE(zero)) {
     return(paste0(
-      "Next [", if (isTRUE(atlas_action)) "atlas=review in Atlas, " else "",
-      "json=Atlas/ACP concept-set JSON, source=choose another cohort source, scope=restart, /back]: "
+      "Next step\n  Options:\n",
+      if (isTRUE(atlas_action)) "    `atlas`    Review in Atlas vocabulary search (*recommended*)\n" else "",
+      "    `json`     Use Atlas/ACP concept-set JSON\n",
+      "    `scope`    Restart with an updated clinical term\n",
+      "    `source`   Choose another cohort source\n",
+      "    `/ohdsi`   Ask a question about this step\n",
+      "    `/back`    Return to the prior step"
     ))
+  } else {
+    paste0(
+      "Concept review action\n  Options:\n",
+      if (isTRUE(atlas_action)) "    `atlas`    Review in Atlas (*recommended*)\n" else "",
+      "    `csv`      Download and validate the CSV review\n",
+      "    `later`    Save this review and resume later\n",
+      if (nzchar(expansion)) paste0("    `", sub("=.*$", "", expansion), "`      ", sub("^[^=]+=", "", expansion), "\n") else "",
+      "    `json`     Use Atlas/ACP concept-set JSON\n",
+      "    `source`   Choose another cohort source\n",
+      "    `/ohdsi`   Ask a question about this step\n",
+      "    `/back`    Return to the prior step"
+    )
   }
-  paste0(
-    "Review [", if (isTRUE(atlas_action)) "atlas=review in Atlas, " else "",
-    "csv=download/validate, later=download and resume later",
-    if (nzchar(expansion)) paste0(", ", expansion) else "",
-    ", json=Atlas/ACP concept-set JSON, source=choose another cohort source, /back]: "
-  )
 }
 
 .studyAgentSlashPmcSaveState <- function(artifact_dir, role_label, narrative, scope, review, status, write_json) {
@@ -324,9 +335,8 @@
     markdown_path <- file.path(artifact_dir, "cohort-definition-readable.md")
     writeLines(readable, markdown_path, useBytes = TRUE)
     console_readable <- .studyAgentSlashCirceDefinitionConsole(readable)
-    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable cohort definition [v=view console, m=view Markdown, Enter=skip]: ") %||% "")))
+    readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable cohort definition [v=view console; Enter=skip]: ") %||% "")))
     if (identical(readable_action, "v")) cat(console_readable, "\n", sep = "")
-    if (identical(readable_action, "m")) cat(readable, "\n", sep = "")
     cat(sprintf("Saved Markdown cohort definition to %s.\n", markdown_path))
   }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
@@ -378,22 +388,36 @@
   if (identical(atlas_review$status %||% "", "different_review")) {
     cat("A completed Atlas review belongs to an earlier R review and will not be reused for this new scope.\n")
   }
-  cat(sprintf("\nReview state and frozen ACP artifacts are saved in %s.\n", artifact_dir))
+  cat(sprintf("\nConcept review ready - %s cohort.\n\n", role_label))
   runs <- review$concept_provenance$search_runs %||% list()
-  for (run in runs) cat(sprintf("- %s%s: returned %s of %s matched (%s); limit %s; truncated %s; ordering %s.\n", run$concept_set_name %||% "lane", if (identical(run$candidate_kind %||% "", "classification_ancestor")) " [classification ancestor fallback; review only]" else "", run$returned_count %||% run$count %||% 0, run$matched_count %||% "not available", run$matched_count_status %||% "not available", run$limit %||% "not available", run$truncated %||% "not available", run$ordering %||% "provider defined"))
+  for (run in runs) {
+    label <- run$concept_set_name %||% "candidate search"
+    returned <- run$returned_count %||% run$count %||% 0
+    matched <- run$matched_count %||% "an unknown number of"
+    suffix <- if (isTRUE(run$truncated)) " (limited results)" else ""
+    fallback <- if (identical(run$candidate_kind %||% "", "classification_ancestor")) " [classification-ancestor fallback; review only]" else ""
+    cat(sprintf("- %s: showing %s of %s matching concepts%s%s.\n", label, returned, matched, suffix, fallback))
+  }
   zero <- identical(as.integer(review$candidate_count %||% 0L), 0L)
+  atlas_action <- .studyAgentSlashAtlasReviewConfigured()
   exact_truncated <- Filter(function(run) isTRUE(run$truncated) && identical(run$matched_count_status %||% "", "exact") && !is.null(run$matched_count), runs)
   max_exact <- if (length(exact_truncated)) max(vapply(exact_truncated, function(run) as.integer(run$matched_count), integer(1))) else 0L
   expansion <- if (max_exact > 0L && max_exact <= 500L) "full=request complete available set" else if (max_exact > 500L) "max500=request largest ACP slice" else ""
-  if (zero) cat("No candidates were returned, so CSV review is unavailable.\n") else {
-    if (nzchar(expansion)) cat(sprintf("The current review is bounded. Use %s before downloading if you want more candidates.\n", expansion))
-    cat(sprintf("CSV review writes %s and %s. Edit only review_* columns; use x for deliberate selections.\n", csv, manifest))
+  if (zero) {
+    if (isTRUE(atlas_action)) {
+      cat("No local candidates were found. Atlas vocabulary review is recommended; you can also revise the term or resume later.\n\n")
+    } else {
+      cat("No local candidates were found. You can revise the term or stop and resume later.\n\n")
+    }
+  } else {
+    if (nzchar(expansion)) cat(sprintf("This is a limited review. Choose %s to retrieve more candidates.\n\n", expansion))
+    cat("Atlas review is recommended. CSV review is also available.\n\n")
+    cat("Review files were saved so you can resume later.\n\n")
   }
   # Atlas remains a useful, explicitly reviewed fallback when the bounded R
   # retrieval returned no candidates. The empty candidate slice only disables
   # CSV review; it must not prevent the reviewer from searching the normal
   # Atlas vocabulary explorer with the confirmed scope as guidance.
-  atlas_action <- .studyAgentSlashAtlasReviewConfigured()
   action_prompt <- .studyAgentSlashPmcReviewActionPrompt(zero, atlas_action, expansion)
   action <- tolower(prompt(action_prompt))
   if (is_back(action)) return(list(action = "retry"))
@@ -415,11 +439,21 @@
   if (identical(action, "atlas") && atlas_action) {
     handoff <- .studyAgentSlashAtlasCreateReviewHandoff(role_label, narrative, scope, review, artifact_dir, write_json, prompt)
     if (is.null(handoff)) return(list(action = "retry"))
-    cat("\nAtlas review request created. Open this URL in Atlas, curate and save the concept set:\n")
-    cat(sprintf("%s\n", handoff$review_url))
-    cat(sprintf("After saving in Atlas, return here. At the Source for %s cohort prompt, type resume (or create), then choose resume at the saved-review prompt.\n", role_label))
+    cat(sprintf("\nAtlas review request created for the %s cohort definition.\n", toupper(role_label)))
+    cat(sprintf("Working statement: %s\n\n", narrative))
+    cat("*** NEXT STEPS ***\n")
+    cat("1. Copy this entire Atlas URL and paste it into a new browser tab or window:\n\n")
+    cat(sprintf("%s\n\n", handoff$review_url))
+    cat("2. Curate the concept set using Atlas features and the Atlas `/ohdsi` helper.\n")
+    cat("3. Save the concept set in Atlas.\n")
+    cat(sprintf("4. Return here and choose `resume` at Source for %s cohort.\n\n", role_label))
     cat("R will use only the immutable Atlas snapshot recorded after that save.\n")
-    return(list(action = "retry"))
+    repeat {
+      next_step <- tolower(prompt("\nType `resume` after following the steps above, or `options` for other options: "))
+      if (is_back(next_step) || next_step %in% c("options", "option")) return(list(action = "retry"))
+      if (identical(next_step, "resume")) return(list(action = "resume"))
+      cat("Type `resume` after saving in Atlas, or `options` to return to the cohort-source menu.\n")
+    }
   }
   if (action %in% c("source", "scope", "")) return(list(action = "retry"))
   if (identical(action, "csv") && !zero) {
@@ -444,7 +478,7 @@
   .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation)
 }
 
-.studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
+.studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE), resume_saved_review = FALSE) {
   artifact_dir <- file.path(output_dir, "phenotype-make-computable", tolower(role_label)); state_path <- .studyAgentSlashPmcStatePath(artifact_dir)
   if (!file.exists(state_path)) {
     legacy_response <- file.path(artifact_dir, "concept-review-response.json")
@@ -461,7 +495,10 @@
   if (file.exists(state_path)) {
     state <- tryCatch(jsonlite::read_json(state_path, simplifyVector = FALSE), error = function(e) NULL)
     if (is.list(state) && identical(state$status %||% "", "awaiting_review")) {
-      choice <- tolower(trimws(as.character(readline_with_navigation(sprintf("Saved %s review found [resume, new, source, /back]: ", role_label)) %||% "")))
+      if (isTRUE(resume_saved_review)) {
+        return(.studyAgentSlashPmcReviewHandoff(role_label, state$narrative_statement, state$scope, state$review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = FALSE))
+      }
+      choice <- tolower(trimws(as.character(readline_with_navigation(sprintf("Saved %s review found\n  Options: `resume` continue the saved review (default), `new` start a new definition, `source` choose another source, or `/back`: ", role_label)) %||% "")))
       if (is_back_signal(choice)) return(choice)
       if (choice %in% c("resume", "")) return(.studyAgentSlashPmcReviewHandoff(role_label, state$narrative_statement, state$scope, state$review, client, artifact_dir, imported_definition_dir, readline_with_navigation, is_back_signal, write_json, download = FALSE))
       if (identical(choice, "source")) return(list(action = "retry"))
