@@ -937,7 +937,7 @@
         cat(sprintf("Atlas-corrected concept-set policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact Atlas-corrected concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, corrected_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
       }
       if (identical(review_choice, "mapping") && !identical(atlas_mode, "required")) {
         chosen <- prompt(sprintf("Reviewed mapping CSV path [%s]: ", mapping_review$csv))
@@ -951,7 +951,7 @@
         cat(sprintf("Exact mapping-derived policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, converted$concept_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
       }
     }
   }

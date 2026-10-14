@@ -310,7 +310,7 @@
   paste(lines, collapse = "\n")
 }
 
-.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline, approval_path = file.path(artifact_dir, "concept-set-approval.json")) {
+.studyAgentSlashPmcEmit <- function(client, narrative, scope, concept_sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation = readline, approval_path = file.path(artifact_dir, "concept-set-approval.json"), role_label = "cohort") {
   emitted <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = TRUE,
     scope = scope, concept_review_mode = "provided_only", concept_sets = concept_sets)
   write_json(emitted, file.path(artifact_dir, "emission-response.json"))
@@ -338,6 +338,32 @@
     readable_action <- tolower(trimws(as.character(readline_with_navigation("Readable cohort definition [v=view console; Enter=skip]: ") %||% "")))
     if (identical(readable_action, "v")) cat(console_readable, "\n", sep = "")
     cat(sprintf("Saved Markdown cohort definition to %s.\n", markdown_path))
+  }
+  atlas_config <- .studyAgentSlashAtlasReviewConfig()
+  if (identical(as.character(validation$status %||% ""), "passed") && .studyAgentSlashAtlasReviewConfigured(atlas_config)) {
+    atlas_choice <- tolower(trimws(as.character(readline_with_navigation("Open this validated cohort definition as an editable Atlas draft? [y/N]: ") %||% "")))
+    if (atlas_choice %in% c("y", "yes")) {
+      handoff <- tryCatch(
+        .studyAgentSlashAtlasCreateCohortDraft(narrative, role_label, cohort, validation, artifact_dir, approval_path, write_json),
+        error = function(error) error
+      )
+      if (inherits(handoff, "error")) {
+        cat(sprintf("Could not open an Atlas cohort draft: %s. The validated R cohort remains unchanged.
+", conditionMessage(handoff)))
+      } else if (is.list(handoff)) {
+        cat("
+Atlas cohort draft created from the validated R artifact.
+")
+        cat("Open this URL to inspect or edit and save a normal Atlas cohort definition:
+
+")
+        cat(sprintf("%s
+
+", handoff$atlas_url))
+        cat("Atlas edits do not change the R workflow already selected. To use an Atlas edit in R, import it later as a database cohort.
+")
+      }
+    }
   }
   id <- .studyAgentSlashStableImportedCohortId(.studyAgentSlashCanonicalCohortJson(cohort))
   imported <- .studyAgentSlashImportAcpCohortDefinition(list(phenotype_id = as.character(id), phenotype_name = narrative,
@@ -380,7 +406,7 @@
     ), approval_path)
     cat(sprintf("All %s Atlas concept-set reviews are accepted. Exact policy object saved to %s.\n", length(sets), approval_path))
     return(.studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir,
-      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
   }
   if (identical(multi_atlas$status %||% "", "awaiting_atlas_review")) {
     .studyAgentSlashAtlasPrintLaneInstructions(role_label, narrative, multi_atlas)
@@ -414,7 +440,7 @@
       atlas_review$handoff$review_revision %||% "unknown",
       atlas_review$handoff$expression_checksum %||% "unknown", approval_path))
     return(.studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir,
-      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
   }
   if (identical(atlas_review$status %||% "", "different_review")) {
     cat("A completed Atlas review belongs to an earlier R review and will not be reused for this new scope.\n")
@@ -517,7 +543,7 @@
   write_json(list(review_id = review$review_id %||% NULL, concept_sets = sets, approval_preview = preview), approval_path)
   cat(sprintf("Exact policy object saved to %s.\n", approval_path))
   if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
-  .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation)
+  .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation, role_label = role_label)
 }
 
 .studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE), resume_saved_review = FALSE, offer_scope_draft = FALSE) {
