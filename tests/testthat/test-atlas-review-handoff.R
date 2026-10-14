@@ -147,3 +147,83 @@ test_that("zero-candidate review retains the configured Atlas handoff", {
     fixed = TRUE
   )
 })
+
+
+test_that("multi-criterion Atlas review advances one named lane at a time", {
+  old <- Sys.getenv(c("STUDY_AGENT_WEBAPI_URL", "STUDY_AGENT_WEBAPI_API_KEY", "STUDY_AGENT_ATLAS_URL"), unset = NA_character_)
+  on.exit({
+    for (name in names(old)) {
+      if (is.na(old[[name]])) Sys.unsetenv(name) else Sys.setenv(structure(old[[name]], names = name))
+    }
+  }, add = TRUE)
+  Sys.setenv(STUDY_AGENT_WEBAPI_URL = "https://webapi.example.org", STUDY_AGENT_WEBAPI_API_KEY = "test-key", STUDY_AGENT_ATLAS_URL = "https://atlas.example.org")
+  artifact_dir <- file.path(tempdir(), paste0("atlas-multi-", as.integer(Sys.time())))
+  dir.create(artifact_dir, recursive = TRUE)
+  on.exit(unlink(artifact_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  scope <- list(
+    index_event = "esketamine",
+    criterion_domains = list(esketamine = "Drug", `major depressive disorder` = "Condition"),
+    criterion_vocabularies = list(esketamine = list("RxNorm")),
+    supporting_condition_occurrence = list(concept_set = "major depressive disorder")
+  )
+  review <- list(review_id = "review-multi", concept_provenance = list(search_runs = list(
+    list(concept_set_name = "esketamine", returned_count = 11L),
+    list(concept_set_name = "major depressive disorder", returned_count = 20L)
+  )))
+  next_id <- 100L
+  registrations <- list()
+  local_mocked_bindings(
+    .studyAgentSlashAtlasWebApiRequest = function(config, method, path, body = NULL) {
+      if (identical(method, "POST") && identical(path, "/conceptset")) {
+        next_id <<- next_id + 1L
+        return(list(id = next_id))
+      }
+      if (identical(method, "POST")) {
+        registrations[[length(registrations) + 1L]] <<- body
+        return(list(session_id = paste0("session-", next_id)))
+      }
+      if (grepl("session-101", path, fixed = TRUE)) {
+        return(list(
+          state = "external_review_accepted", review_revision = 1L, expression_checksum = "drug",
+          expression = list(items = list(list(
+            concept = list(CONCEPT_ID = 111L, DOMAIN_ID = "Drug"),
+            isExcluded = FALSE, includeDescendants = TRUE, includeMapped = FALSE
+          )))
+        ))
+      }
+      if (grepl("session-102", path, fixed = TRUE)) {
+        return(list(
+          state = "external_review_accepted", review_revision = 1L, expression_checksum = "condition",
+          expression = list(items = list(list(
+            concept = list(CONCEPT_ID = 222L, DOMAIN_ID = "Condition"),
+            isExcluded = FALSE, includeDescendants = FALSE, includeMapped = FALSE
+          )))
+        ))
+      }
+      stop("unexpected request")
+    },
+    .package = "slashOhdsiStrategusAssistant"
+  )
+  prompt_answers <- c("", "", "", "", "")
+  prompt <- function(message) {
+    answer <- prompt_answers[[1L]]
+    prompt_answers <<- prompt_answers[-1L]
+    answer
+  }
+  write_json <- function(value, target) jsonlite::write_json(value, target, auto_unbox = TRUE)
+  first <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = TRUE)
+  expect_equal(first$status, "awaiting_atlas_review")
+  expect_equal(first$lane$key, "esketamine")
+  expect_true(registrations[[1]]$require_item_domain_metadata)
+  expect_equal(registrations[[1]]$review_lane$purpose, "Index event")
+  expect_equal(registrations[[1]]$scope$criterion_domains$esketamine, "Drug")
+  second <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = FALSE)
+  expect_equal(second$status, "awaiting_atlas_review")
+  expect_equal(second$lane$key, "major depressive disorder")
+  expect_equal(registrations[[2]]$review_lane$purpose, "Supporting Condition")
+  expect_equal(registrations[[2]]$scope$criterion_domains$`major depressive disorder`, "Condition")
+  complete <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = FALSE)
+  expect_equal(complete$status, "accepted")
+  expect_equal(vapply(complete$concept_sets, `[[`, character(1), "name"), c("esketamine", "major depressive disorder"))
+  expect_equal(vapply(complete$concept_sets, `[[`, character(1), "domain"), c("Drug", "Condition"))
+})
