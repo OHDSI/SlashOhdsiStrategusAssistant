@@ -360,6 +360,37 @@
     if (nzchar(as.character(urls$manifest %||% ""))) slashOhdsiAcpClient::acp_download(client, urls$manifest, manifest)
   }
   .studyAgentSlashPmcSaveState(artifact_dir, role_label, narrative, scope, review, "awaiting_review", write_json)
+  multi_atlas <- .studyAgentSlashAtlasAdvanceMultiReview(
+    role_label, narrative, scope, review, artifact_dir, write_json,
+    prompt = prompt, initialize = FALSE
+  )
+  if (identical(multi_atlas$status %||% "", "accepted")) {
+    sets <- multi_atlas$concept_sets
+    preview <- unlist(lapply(sets, function(set) lapply(set$items, function(item) list(
+      concept_set_name = set$name, concept_id = item$concept_id, concept_name = "Atlas accepted snapshot",
+      domain = item$domain, policy = if (isTRUE(item$is_excluded)) "Exclude" else "Include"))), recursive = FALSE)
+    .studyAgentSlashPmcPrintPreview(preview)
+    approval_path <- file.path(artifact_dir, "concept-set-approval.json")
+    write_json(list(
+      review_id = review$review_id %||% NULL,
+      source = "atlas_external_multi_review",
+      atlas_review = multi_atlas$handoff,
+      concept_sets = sets,
+      approval_preview = preview
+    ), approval_path)
+    cat(sprintf("All %s Atlas concept-set reviews are accepted. Exact policy object saved to %s.\n", length(sets), approval_path))
+    return(.studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir,
+      imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+  }
+  if (identical(multi_atlas$status %||% "", "awaiting_atlas_review")) {
+    .studyAgentSlashAtlasPrintLaneInstructions(role_label, narrative, multi_atlas)
+    next_step <- tolower(prompt("\nType `resume` after saving in Atlas, or `options` to return to the cohort-source menu: "))
+    if (identical(next_step, "resume")) return(list(action = "resume"))
+    return(list(action = "retry"))
+  }
+  if (identical(multi_atlas$status %||% "", "different_review")) {
+    cat("A multi-criterion Atlas review belongs to an earlier R review and will not be reused for this new scope.\n")
+  }
   atlas_review <- .studyAgentSlashAtlasAcceptedReview(artifact_dir, write_json, review$review_id %||% "")
   if (identical(atlas_review$status %||% "", "accepted")) {
     sets <- .studyAgentSlashPmcExternalSets(
@@ -437,6 +468,17 @@
   }
   if (identical(action, "later")) { download_review(); return(list(action = "retry")) }
   if (identical(action, "atlas") && atlas_action) {
+    multi_atlas <- .studyAgentSlashAtlasAdvanceMultiReview(
+      role_label, narrative, scope, review, artifact_dir, write_json,
+      prompt = prompt, initialize = TRUE
+    )
+    if (identical(multi_atlas$status %||% "", "awaiting_atlas_review")) {
+      .studyAgentSlashAtlasPrintLaneInstructions(role_label, narrative, multi_atlas)
+      next_step <- tolower(prompt("\nType `resume` after saving in Atlas, or `options` to return to the cohort-source menu: "))
+      if (identical(next_step, "resume")) return(list(action = "resume"))
+      return(list(action = "retry"))
+    }
+    if (identical(multi_atlas$status %||% "", "cancelled")) return(list(action = "retry"))
     handoff <- .studyAgentSlashAtlasCreateReviewHandoff(role_label, narrative, scope, review, artifact_dir, write_json, prompt)
     if (is.null(handoff)) return(list(action = "retry"))
     cat(sprintf("\nAtlas review request created for the %s cohort definition.\n", toupper(role_label)))
@@ -478,7 +520,7 @@
   .studyAgentSlashPmcEmit(client, narrative, scope, sets, artifact_dir, imported_definition_dir, write_json, readline_with_navigation)
 }
 
-.studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE), resume_saved_review = FALSE) {
+.studyAgentSlashCreateComputableRoleSelection <- function(role_label, role_statement, client, output_dir, imported_definition_dir, interactive = TRUE, readline_with_navigation = readline, is_back_signal = function(value) FALSE, write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE), resume_saved_review = FALSE, offer_scope_draft = FALSE) {
   artifact_dir <- file.path(output_dir, "phenotype-make-computable", tolower(role_label)); state_path <- .studyAgentSlashPmcStatePath(artifact_dir)
   if (!file.exists(state_path)) {
     legacy_response <- file.path(artifact_dir, "concept-review-response.json")
@@ -513,7 +555,8 @@
     interactive = interactive,
     readline_with_navigation = readline_with_navigation,
     is_back_signal = is_back_signal,
-    write_json = write_json
+    write_json = write_json,
+    offer_scope_draft = offer_scope_draft
   )
 }
 
