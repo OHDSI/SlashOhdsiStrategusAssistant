@@ -1380,9 +1380,9 @@ Available exploration commands
     blank_study_intent_direct <- FALSE
     if (interactive) {
       set_dialogue_context("study_intent", context = list(default_intent = default_intent))
-      entered <- readline_with_navigation(sprintf(
-        "Study intent [Enter to acquire cohorts directly]: "
-      ))
+      entered <- readline_with_navigation(
+        "\nWrite a sentence about your incidence rate study cohorts.\n\nExample (X and Y are clinical terms or phrases):\n`The incidence of X in new users of Y.`\n\nYou can be more detailed if you like. You may also press Enter without writing a sentence."
+      )
       if (is_back_signal(entered)) {
         cat("Already at the first step\n")
         next
@@ -1414,10 +1414,11 @@ Available exploration commands
       skip_reason <- "blank_study_intent_direct_acquisition"
       skip_prompt_source <- "blank_study_intent"
     } else if (isTRUE(interactive)) {
-      direct_acquisition_mode <- prompt_yesno(
-        "Skip ACP intent split and enter cohort role statements directly?",
-        default = FALSE
+      use_ai_role_drafts <- prompt_yesno(
+        "Use AI to draft the target and outcome cohort statements?",
+        default = TRUE
       )
+      direct_acquisition_mode <- !isTRUE(use_ai_role_drafts)
       skip_intent_split_and_recommendation <- isTRUE(direct_acquisition_mode)
       if (isTRUE(direct_acquisition_mode)) {
         skip_reason <- "interactive_direct_acquisition"
@@ -1435,14 +1436,14 @@ Available exploration commands
         back_to_study_intent <- FALSE
         repeat {
           set_dialogue_context("intent_split", "target", context = list(study_intent = studyIntent, target_statement = target_statement, outcome_statement = outcome_statement, direct_acquisition_mode = TRUE))
-          inp <- readline_with_navigation(sprintf("Target cohort statement [%s]: ", target_statement))
+          inp <- readline_with_navigation("Write a statement for the target cohort (the patients in whom the outcome event might occur)")
           if (is_back_signal(inp)) {
             back_to_study_intent <- TRUE
             break
           }
           if (nzchar(trimws(inp))) target_statement <- inp
           set_dialogue_context("intent_split", "outcome", context = list(study_intent = studyIntent, target_statement = target_statement, outcome_statement = outcome_statement, direct_acquisition_mode = TRUE))
-          inp <- readline_with_navigation(sprintf("Outcome cohort statement [%s]: ", outcome_statement))
+          inp <- readline_with_navigation("Write a statement for the outcome cohort (the event or condition measured after cohort entry)")
           if (is_back_signal(inp)) next
           if (nzchar(trimws(inp))) outcome_statement <- inp
           derived_study_intent <- ensure_study_intent_from_role_statements(studyIntent, target_statement, outcome_statement)
@@ -1456,7 +1457,7 @@ Available exploration commands
       if (interactive) {
         cat("\nConnecting to ACP...\n")
       }
-      acp_connect(acpUrl)
+      dialogue_acp_client$client <- create_acp_client(url = acpUrl, check = TRUE)
 
       if (interactive) {
         cat("\n== Step 1: Parse study intent into target/outcome statements ==\n")
@@ -1485,14 +1486,14 @@ Available exploration commands
         back_to_study_intent <- FALSE
         repeat {
           set_dialogue_context("intent_split", "target", context = list(study_intent = studyIntent, target_statement = target_statement, outcome_statement = outcome_statement))
-          inp <- readline_with_navigation(sprintf("Target cohort statement [%s]: ", target_statement))
+          inp <- readline_with_navigation(sprintf("Target cohort statement [Enter to accept, or rewrite]\n  %s", target_statement))
           if (is_back_signal(inp)) {
             back_to_study_intent <- TRUE
             break
           }
           if (nzchar(trimws(inp))) target_statement <- inp
           set_dialogue_context("intent_split", "outcome", context = list(study_intent = studyIntent, target_statement = target_statement, outcome_statement = outcome_statement))
-          inp <- readline_with_navigation(sprintf("Outcome cohort statement [%s]: ", outcome_statement))
+          inp <- readline_with_navigation(sprintf("Outcome cohort statement [Enter to accept, or rewrite]\n  %s", outcome_statement))
           if (is_back_signal(inp)) next
           if (nzchar(trimws(inp))) outcome_statement <- inp
           break
@@ -1523,6 +1524,7 @@ Available exploration commands
   selection_manifest_path <- file.path(output_dir, "selected_cohort_sources.json")
 
   repeat {
+    .studyAgentSlashPrintCohortRoleSummary("target", list(target = target_statement, outcome = outcome_statement))
     target_source_mode <- choose_selection_source_mode("target", allow_index = isTRUE(ai_enabled) && (!isTRUE(skip_intent_split_and_recommendation) || isTRUE(direct_acquisition_mode)))
     if (is_back_signal(target_source_mode)) next
 
@@ -1541,7 +1543,7 @@ Available exploration commands
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
       prompt_phenotype_library_imports = prompt_phenotype_library_imports,
-      prompt_create_computable = function(role_label, allow_multiple = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json) },
+      prompt_create_computable = function(role_label, allow_multiple = FALSE, resume_saved_review = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json, resume_saved_review = resume_saved_review) },
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_target_selection)) next
@@ -1603,9 +1605,17 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("target_recommendation", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        ok_any <- prompt_yesno("Do any of these look like potential candidates for the target?", default = TRUE)
+        selected_indices_target <- .studyAgentSlashChoosePhenotypeRecommendationIndices(
+          recommendations = recommendations_target,
+          role_label = "target",
+          allow_multiple = FALSE,
+          readline_with_navigation = readline_with_navigation,
+          is_back_signal = is_back_signal
+        )
+        if (is_back_signal(selected_indices_target)) next
+        ok_any <- length(selected_indices_target) > 0L
         if (!ok_any) {
-          widen <- prompt_yesno("Widen candidate pool and try again?", default = TRUE)
+          widen <- FALSE
           if (widen) {
             message("Generating additional recommendations (next window)...")
             used_window2_target <- TRUE
@@ -1647,7 +1657,7 @@ Available exploration commands
             }
             mark_checkpoint("target_advice", list(recommendations_path = recs_target_path, role_statement = target_statement))
             next_action <- tolower(trimws(as.character(readline_with_navigation(
-              "Next [rewrite=revise target statement, source=return to cohort-source menu (choose create for Atlas review), /back]: "
+              .studyAgentSlashAdviceNextPrompt("target")
             ) %||% "")))
             if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
             if (identical(next_action, "rewrite")) {
@@ -1676,13 +1686,8 @@ Available exploration commands
       selected_ids_target <- NULL
       selected_ids_outcome <- character(0)
       if (interactive) {
-        labels <- vapply(seq_along(recommendations_target), function(i) {
-          rec <- recommendations_target[[i]]
-          sprintf("%s (ID %s; %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?", rec$computability_status %||% "status unknown")
-        }, character(1))
-        picks <- utils::select.list(labels, multiple = FALSE, title = "Select target phenotype")
-        if (!nzchar(picks)) next
-        selected_rec <- recommendations_target[[which(labels == picks)[1]]]
+        if (!exists("selected_indices_target", inherits = FALSE) || !length(selected_indices_target)) next
+        selected_rec <- recommendations_target[[as.integer(selected_indices_target[[1L]])]]
       } else {
         selected_rec <- recommendations_target[[1]]
       }
@@ -1700,8 +1705,9 @@ Available exploration commands
     use_mapping <- FALSE
     if (interactive) {
       set_dialogue_context("incidence_design_setup", context = list(study_intent = studyIntent, target_statement = target_statement, outcome_statement = outcome_statement, selected_target_ids = as.list(selected_ids_target %||% list()), selected_outcome_ids = as.list(selected_ids_outcome %||% list())))
-      use_mapping <- prompt_yesno_navigation("Map cohort IDs to a new range (avoid collisions)?", default = TRUE)
-      if (is_back_signal(use_mapping)) next
+      keep_ids <- prompt_yesno_navigation("Keep cohort IDs as is?", default = TRUE)
+      if (is_back_signal(keep_ids)) next
+      use_mapping <- !isTRUE(keep_ids)
     }
     cohort_id_base <- NA_integer_
     next_id <- NA_integer_
@@ -1713,7 +1719,14 @@ Available exploration commands
         inp <- readline_with_navigation(msg)
         if (is_back_signal(inp)) next
         inp <- trimws(as.character(inp %||% ""))
-        if (nzchar(inp)) cohort_id_base <- as.integer(inp)
+        if (nzchar(inp)) {
+          parsed_base <- suppressWarnings(as.integer(inp))
+          if (is.na(parsed_base) || parsed_base < 1L) {
+            cat(sprintf("Cohort ID base must be a positive integer; using %s.\n", cohort_id_base))
+          } else {
+            cohort_id_base <- parsed_base
+          }
+        }
       }
       next_id <- cohort_id_base
     }
@@ -1742,7 +1755,7 @@ Available exploration commands
   do_target_improvements <- !isTRUE(skip_phenotype_improvements)
   if (interactive && isTRUE(do_target_improvements)) {
     set_dialogue_context("target_improvements", "target", context = list(study_intent = studyIntent, role_statement = target_statement, target_statement = target_statement, selected_target_ids = as.list(selected_ids_target %||% list())))
-    do_target_improvements <- prompt_yesno("Continue to target phenotype improvements?", default = TRUE)
+    do_target_improvements <- prompt_yesno("Review optional phenotype-improvement suggestions? These do not change the cohort definition.", default = FALSE)
     if (do_target_improvements) {
       cat("\n== Step 4: Target phenotype improvements ==\n")
     }
@@ -1834,6 +1847,7 @@ Available exploration commands
 
 
   repeat {
+    .studyAgentSlashPrintCohortRoleSummary("outcome", list(target = target_statement, outcome = outcome_statement))
     outcome_source_mode <- choose_selection_source_mode("outcome", allow_index = isTRUE(ai_enabled) && (!isTRUE(skip_intent_split_and_recommendation) || isTRUE(direct_acquisition_mode)))
     if (is_back_signal(outcome_source_mode)) next
 
@@ -1852,7 +1866,7 @@ Available exploration commands
       prompt_file_imports = prompt_file_cohort_imports,
       prompt_directory_imports = prompt_directory_cohort_imports,
       prompt_phenotype_library_imports = prompt_phenotype_library_imports,
-      prompt_create_computable = function(role_label, allow_multiple = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json) },
+      prompt_create_computable = function(role_label, allow_multiple = FALSE, resume_saved_review = FALSE) { if (is.null(dialogue_acp_client$client) && !ensure_workflow_dialogue_client(acpUrl)) stop("ACP bridge unavailable."); .studyAgentSlashCreateComputableRoleSelection(role_label, if (identical(role_label, "target")) target_statement else outcome_statement, dialogue_acp_client$client, output_dir, imported_definition_dir, interactive, readline_with_navigation, is_back_signal, write_json, resume_saved_review = resume_saved_review) },
       selection_record_from_import = selection_record_from_import
     )
     if (is_back_signal(imported_outcome_selection)) next
@@ -1907,9 +1921,17 @@ Available exploration commands
 
       if (interactive) {
         set_dialogue_context("outcome_recommendation", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement, top_k = topK, max_results = maxResults, candidate_limit = candidateLimit))
-        ok_any <- prompt_yesno("Do any of these look like potential candidates for the outcome?", default = TRUE)
+        selected_indices_outcome <- .studyAgentSlashChoosePhenotypeRecommendationIndices(
+          recommendations = recommendations_outcome,
+          role_label = "outcome",
+          allow_multiple = TRUE,
+          readline_with_navigation = readline_with_navigation,
+          is_back_signal = is_back_signal
+        )
+        if (is_back_signal(selected_indices_outcome)) next
+        ok_any <- length(selected_indices_outcome) > 0L
         if (!ok_any) {
-          widen <- prompt_yesno("Widen candidate pool and try again?", default = TRUE)
+          widen <- FALSE
           if (widen) {
             message("Generating additional recommendations (next window)...")
             used_window2_outcome <- TRUE
@@ -1937,7 +1959,7 @@ Available exploration commands
             if (length(advice_core$next_steps %||% list()) > 0) { cat("Next steps:\n"); for (step in advice_core$next_steps) cat(sprintf("  - %s\n", step)) }
             if (length(advice_core$questions %||% list()) > 0) { cat("Questions to clarify:\n"); for (q in advice_core$questions) cat(sprintf("  - %s\n", q)) }
             mark_checkpoint("outcome_advice", list(recommendations_path = recs_outcome_path, role_statement = outcome_statement))
-            next_action <- tolower(trimws(as.character(readline_with_navigation("Next [rewrite=revise outcome statement, source=return to cohort-source menu (choose create for Atlas review), /back]: ") %||% "")))
+            next_action <- tolower(trimws(as.character(readline_with_navigation(.studyAgentSlashAdviceNextPrompt("outcome")) %||% "")))
             if (is_back_signal(next_action) || !nzchar(next_action) || identical(next_action, "source")) next
             if (identical(next_action, "rewrite")) {
               revised_statement <- readline_with_navigation("Revised outcome cohort statement: ")
@@ -1961,14 +1983,8 @@ Available exploration commands
 
       selected_ids_outcome <- NULL
       if (interactive) {
-        labels <- vapply(seq_along(recommendations_outcome), function(i) {
-          rec <- recommendations_outcome[[i]]
-          sprintf("%s (ID %s; %s)", rec$phenotype_name %||% "<unknown>", rec$phenotype_id %||% "?", rec$computability_status %||% "status unknown")
-        }, character(1))
-        picks <- utils::select.list(labels, multiple = TRUE, title = "Select outcome phenotypes")
-        if (!length(picks)) next
-        selected_selections <- lapply(picks, function(label) {
-          idx <- which(labels == label)[1]
+        if (!exists("selected_indices_outcome", inherits = FALSE) || !length(selected_indices_outcome)) next
+        selected_selections <- lapply(as.integer(selected_indices_outcome), function(idx) {
           prepare_recommended_phenotype(recommendations_outcome[[idx]], "outcome")
         })
       } else {
@@ -1994,7 +2010,7 @@ Available exploration commands
     do_outcome_improvements <- !isTRUE(skip_phenotype_improvements)
     if (interactive && isTRUE(do_outcome_improvements)) {
       set_dialogue_context("outcome_improvements", "outcome", context = list(study_intent = studyIntent, role_statement = outcome_statement, target_statement = target_statement, outcome_statement = outcome_statement, selected_outcome_ids = as.list(selected_ids_outcome %||% list())))
-      do_outcome_improvements <- prompt_yesno("Continue to outcome phenotype improvements?", default = TRUE)
+      do_outcome_improvements <- prompt_yesno("Review optional phenotype-improvement suggestions? These do not change the cohort definition.", default = FALSE)
       if (do_outcome_improvements) {
         cat("\n== Step 7: Outcome phenotype improvements ==\n")
       }

@@ -108,8 +108,8 @@ test_that("source selector offers resume for a pending concept review", {
     },
     is_back_signal = function(value) FALSE
   )
-  expect_identical(choice, "create")
-  expect_match(prompts[[1L]], "resume=resume saved review", fixed = TRUE)
+  expect_identical(choice, "resume")
+  expect_match(prompts[[1L]], "`resume`   Continue the saved Atlas review", fixed = TRUE)
 })
 
 
@@ -166,4 +166,74 @@ test_that("reviewed concept CSV rejects policy marks without a root decision", {
   utils::write.csv(as.data.frame(row, check.names = FALSE), csv_path, row.names = FALSE, na = "")
   jsonlite::write_json(list(review_id = "review-2"), manifest_path, auto_unbox = TRUE)
   expect_error(slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(csv_path, manifest_path, "review-2"), "without review_include_concept")
+})
+
+
+test_that("source selector presents readable choices and a pending Atlas resume", {
+  prompts <- character()
+  choice <- slashOhdsiStrategusAssistant:::.studyAgentSlashChooseSelectionSourceMode(
+    role_label = "outcome",
+    allow_index = TRUE,
+    interactive = TRUE,
+    resume_pending = TRUE,
+    readline_with_navigation = function(prompt) {
+      prompts <<- c(prompts, prompt)
+      "resume"
+    },
+    is_back_signal = function(value) FALSE
+  )
+  expect_identical(choice, "resume")
+  expect_match(prompts[[1L]], "Source for outcome cohort", fixed = TRUE)
+  expect_match(prompts[[1L]], "Options:", fixed = TRUE)
+  expect_match(prompts[[1L]], "`resume`   Continue the saved Atlas review", fixed = TRUE)
+  expect_false(grepl("\\[ai=agentic", prompts[[1L]]))
+})
+
+test_that("cohort role summary retains all known role statements", {
+  output <- capture.output(
+    slashOhdsiStrategusAssistant:::.studyAgentSlashPrintCohortRoleSummary(
+      "comparator",
+      list(target = "new users of atomoxetine", comparator = "new users of methylphenidate", outcome = "venous thromboembolism")
+    )
+  )
+  expect_match(paste(output, collapse = "\n"), "Study plan", fixed = TRUE)
+  expect_match(paste(output, collapse = "\n"), "Target: new users of atomoxetine", fixed = TRUE)
+  expect_match(paste(output, collapse = "\n"), "Comparator: new users of methylphenidate", fixed = TRUE)
+  expect_match(paste(output, collapse = "\n"), "Now selecting the comparator cohort.", fixed = TRUE)
+})
+
+test_that("numbered phenotype review shows details and requires explicit acceptance", {
+  values <- c("2", "y")
+  position <- 0L
+  read_value <- function(prompt) {
+    position <<- position + 1L
+    values[[position]]
+  }
+  recommendations <- list(
+    list(phenotype_name = "First candidate", phenotype_id = "ohdsi:1"),
+    list(phenotype_name = "Second candidate", phenotype_id = "ohdsi:2", computability_status = "Circe available", justification = "Matches the requested outcome.")
+  )
+  output <- capture.output(
+    selected <- slashOhdsiStrategusAssistant:::.studyAgentSlashChoosePhenotypeRecommendationIndices(
+      recommendations = recommendations,
+      role_label = "outcome",
+      allow_multiple = FALSE,
+      readline_with_navigation = read_value,
+      is_back_signal = function(value) FALSE
+    )
+  )
+  expect_identical(selected, 2L)
+  rendered <- paste(output, collapse = "\n")
+  expect_match(rendered, "Candidate details", fixed = TRUE)
+  expect_match(rendered, "Second candidate", fixed = TRUE)
+})
+
+test_that("numbered phenotype review permits no relevant candidate", {
+  selected <- slashOhdsiStrategusAssistant:::.studyAgentSlashChoosePhenotypeRecommendationIndices(
+    recommendations = list(list(phenotype_name = "Only candidate", phenotype_id = "ohdsi:1")),
+    role_label = "target",
+    readline_with_navigation = function(prompt) "0",
+    is_back_signal = function(value) FALSE
+  )
+  expect_identical(selected, integer(0))
 })

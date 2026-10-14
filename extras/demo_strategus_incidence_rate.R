@@ -1,54 +1,13 @@
-# Demo: ACP-assisted Strategus incidence workflow
-#
-# Run this script from any writable directory after installing
-# slashOhdsiStrategusAssistant and slashOhdsiAcpClient. ACP must be available at
-# ACP_URL (or http://127.0.0.1:8765 by default).
+source(file.path(dirname(sys.frame(1)$ofile), "conference_demo_common.R"))
 
-library(slashOhdsiStrategusAssistant)
+acp_url <- .studyAgentDemoAcpUrl()
+demo_root <- .studyAgentDemoRoot()
 
-# outputDir controls the workflow artifacts and the default Strategus work/results roots.
-demo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
-banner_path <- system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant")
-if (!nzchar(banner_path)) stop("Installed package banner asset was not found.")
-library(slashOhdsiAcpClient)
-
-acp_url <- Sys.getenv("ACP_URL", "http://127.0.0.1:8765")
-Sys.setenv(ACP_TIMEOUT = "1800", ACP_URL = acp_url)
-invisible(slashOhdsiAcpClient::acp_connect(url = acp_url))
-
-# Artifacts are written beneath the directory from which this script is run.
-output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence")
-
-# To start from scratch, uncomment the next line. It removes only this demo output.
-unlink(output_dir, recursive = TRUE, force = TRUE)
-
-## all three options are required for Atlas integration
-Sys.setenv(
-  STUDY_AGENT_WEBAPI_URL = "http://localhost:8080/WebAPI",
-  STUDY_AGENT_WEBAPI_API_KEY = "wa_f20ae9caa7dd91e1_-OLiQP_1bee1GisQIItx5hsx7CPo1UnrA7MDwYHn14A",
-  STUDY_AGENT_ATLAS_URL = "http://localhost:5173"
-)
-options(studyAgent.promptWidth = 62L)  # experiment with different settings
 slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-  outputDir = output_dir,
+  outputDir = file.path(demo_root, "demo-strategus-cohort-incidence"),
   acpUrl = acp_url,
   aiSupport = "enabled",
-  bannerPath = banner_path,
-  ##showBanner = TRUE,
+  bannerPath = .studyAgentDemoBanner(),
   showBanner = FALSE,
   executionTableDisplay = "console"
 )
-
-# Resume a prior run:
-## slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-##   outputDir = output_dir,
-##   acpUrl = acp_url,
-##   aiSupport = "enabled",
-##   resume = TRUE,
-##   allowCache = TRUE,
-##   promptOnCache = TRUE,
-##   bannerPath = banner_path,
-##   showBanner = TRUE,
-##   executionTableDisplay = "console"
-## )
-

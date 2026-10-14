@@ -76,6 +76,12 @@ testthat::test_that("long source prompts retain the entered response", {
 })
 
 
+testthat::test_that("incidence shell uses its ACP client abstraction for intent splitting", {
+  shell_source <- paste(deparse(body(runStrategusIncidenceShell)), collapse = "\n")
+  testthat::expect_false(grepl("acp_connect\\(", shell_source))
+  testthat::expect_match(shell_source, "create_acp_client", fixed = TRUE)
+})
+
 testthat::test_that("terminal layout is honored at the first prompt in both shells", {
   previous <- options(studyAgent.promptLayout = "terminal")
   on.exit(options(previous), add = TRUE)
@@ -98,7 +104,7 @@ testthat::test_that("terminal layout is honored at the first prompt in both shel
       }
     )
     testthat::expect_identical(result$status, "quit")
-    testthat::expect_match(prompts[[1L]], "^Study intent", perl = TRUE)
+    testthat::expect_match(prompts[[1L]], "Write a sentence", perl = TRUE)
     testthat::expect_true(endsWith(prompts[[1L]], "|"))
   }
 })
@@ -252,9 +258,9 @@ testthat::test_that("incidence role-statement back returns to target entry", {
       showBanner = FALSE, checkRuntime = FALSE, aiSupport = "disabled",
       inputProvider = transcript$readline
     ),
-    "Shell transcript exhausted at prompt: Target cohort statement"
+    "Shell transcript exhausted at prompt: Write a statement for the target cohort"
   )
-  testthat::expect_match(tail(transcript$prompts(), 1L), "Target cohort statement", fixed = TRUE)
+  testthat::expect_match(tail(transcript$prompts(), 1L), "Write a statement for the target cohort", fixed = TRUE)
 })
 
 testthat::test_that("CohortMethod role-statement back returns to target entry", {
@@ -265,9 +271,9 @@ testthat::test_that("CohortMethod role-statement back returns to target entry", 
       showBanner = FALSE, checkRuntime = FALSE, aiSupport = "disabled",
       inputProvider = transcript$readline
     ),
-    "Shell transcript exhausted at prompt: Target statement"
+    "Shell transcript exhausted at prompt: Write a statement for the target cohort"
   )
-  testthat::expect_match(tail(transcript$prompts(), 1L), "Target statement", fixed = TRUE)
+  testthat::expect_match(tail(transcript$prompts(), 1L), "Write a statement for the target cohort", fixed = TRUE)
 })
 
 testthat::test_that("CohortMethod keeps two independently acquired outcome cohorts", {
@@ -280,7 +286,7 @@ testthat::test_that("CohortMethod keeps two independently acquired outcome cohor
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
     "", "ACE inhibitor", "Statins", "Cystitis", "y", "Renal failure", "n", "", "",
-    "file", target_path, "n", "y", "", "file", comparator_path, "y", "", "file",
+    "file", target_path, "y", "y", "", "file", comparator_path, "y", "", "file",
     paste(outcome_one_path, outcome_two_path, sep = ","), "y", "n"
   ))
   improvement_roles <- character(0)
@@ -321,7 +327,7 @@ testthat::test_that("CohortMethod free-text settings use the injected ACP recomm
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
     "", "ACE inhibitor", "Statins", "Heart failure", "n", "", "", "file", target_path,
-    "n", "n", "", "file", comparator_path, "n", "", "file", outcome_path, "n", "",
+    "y", "n", "", "file", comparator_path, "n", "", "file", outcome_path, "n", "",
     "", "", "", "", "n", "n", "", ""
   ))
   calls <- character(0)
@@ -363,7 +369,7 @@ testthat::test_that("incidence keeps two outcomes when only the first has improv
   outcome_two_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome-two.json"), 303L, "Renal failure")
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
-    "", "ACE inhibitor", "Cough", "", "file", target_path, "n", "n", "file",
+    "", "ACE inhibitor", "Cough", "", "file", target_path, "y", "n", "file",
     paste(outcome_one_path, outcome_two_path, sep = ","), "y", "n"
   ))
   improvement_ids <- integer(0)
@@ -398,7 +404,7 @@ testthat::test_that("incidence time-at-risk wizard recovers invalid values and p
   outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 502L, "Cough")
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
-    "", "ACE inhibitor", "Cough", "", "file", target_path, "n", "n", "file", outcome_path,
+    "", "ACE inhibitor", "Cough", "", "file", target_path, "y", "n", "file", outcome_path,
     "n", "n", "bad", "/back", "1", "7", "Thirty days", "start", "0", "start", "30", "7", "n", "y", "y", "18,65"
   ))
   testthat::expect_error(
@@ -427,7 +433,7 @@ testthat::test_that("accepted incidence improvement patches only its selected ou
   second_path <- write_shell_circe_fixture(file.path(fixture_dir, "second.json"), 603L, "Renal failure")
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
-    "", "ACE inhibitor", "Cough", "", "file", target_path, "n", "n", "file",
+    "", "ACE inhibitor", "Cough", "", "file", target_path, "y", "n", "file",
     paste(first_path, second_path, sep = ","), "y", "y", "y"
   ))
   fixture <- function(flow_name, body, url) {
@@ -509,7 +515,7 @@ testthat::test_that("incidence no-AI workflow acquires local cohorts and generat
   outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 702L, "Cough")
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
-    "", "ACE inhibitor", "Cough", "", "file", target_path, "n", "file", outcome_path, "y", "n"
+    "", "ACE inhibitor", "Cough", "", "file", target_path, "y", "file", outcome_path, "y", "n"
   ))
   no_acp_call <- function(...) stop("ACP must not be called when aiSupport is disabled.")
 
@@ -538,8 +544,8 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   outcome_path <- write_shell_circe_fixture(file.path(fixture_dir, "outcome.json"), 713L, "Heart failure")
   output_dir <- file.path(fixture_dir, "workflow")
   transcript <- new_shell_transcript(c(
-    "", "ACE inhibitor", "Statins", "Heart failure", "", "", "file", target_path,
-    "n", "", "file", comparator_path, "", "file", outcome_path, rep("", 24L)
+    "", "ACE inhibitor", "Statins", "Heart failure", "", "", "", "file", target_path,
+    "y", "", "file", comparator_path, "", "file", outcome_path, rep("", 24L)
   ))
   no_acp_call <- function(...) stop("ACP must not be called when aiSupport is disabled.")
 
@@ -573,9 +579,9 @@ testthat::test_that("CohortMethod analytic-settings back restarts the settings s
   back_sent <- FALSE
   input_provider <- function(prompt) {
     prompts <<- c(prompts, prompt)
-    if (grepl("^Target statement", prompt)) return("ACE inhibitor")
-    if (grepl("^Comparator statement", prompt)) return("Statins")
-    if (grepl("^Outcome statement", prompt)) return("Heart failure")
+    if (grepl("^Write a statement for the target cohort", prompt)) return("ACE inhibitor")
+    if (grepl("^Write a statement for the comparator cohort", prompt)) return("Statins")
+    if (grepl("^Write a statement for the outcome cohort", prompt)) return("Heart failure")
     if (grepl("^Source for target cohort", prompt)) return("file")
     if (grepl("^Source for comparator cohort", prompt)) return("file")
     if (grepl("^Source for outcome cohort", prompt)) return("file")
