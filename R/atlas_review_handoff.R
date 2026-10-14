@@ -15,6 +15,38 @@
   all(vapply(config, function(value) nzchar(trimws(as.character(value %||% ""))), logical(1)))
 }
 
+.studyAgentSlashAtlasCohortDraftUrl <- function(config, session_id) {
+  paste0(config$atlas_url, "/#/cohorts/new?studyAgentSession=", utils::URLencode(as.character(session_id), reserved = TRUE), "&studyAgentExternalR=true")
+}
+
+.studyAgentSlashAtlasCreateCohortDraft <- function(narrative, role_label, cohort_expression, validation, artifact_dir, approval_path, write_json) {
+  config <- .studyAgentSlashAtlasReviewConfig()
+  if (!.studyAgentSlashAtlasReviewConfigured(config)) return(NULL)
+  approval <- tryCatch(jsonlite::read_json(approval_path, simplifyVector = FALSE), error = function(error) list())
+  request <- list(
+    narrative = narrative,
+    role_label = role_label,
+    review_id = as.character(approval$review_id %||% ""),
+    expression = cohort_expression,
+    technical_validation = list(status = as.character(validation$status %||% ""))
+  )
+  response <- .studyAgentSlashAtlasWebApiRequest(config, "POST", "/study-agent/v1/cohort-definition-sessions/external-r-draft", request)
+  session_id <- as.character(response$session_id %||% "")
+  if (!nzchar(session_id)) stop("Atlas/WebAPI did not return an R cohort-draft session identifier.")
+  handoff <- list(
+    source = "r_phenotype_make_computable",
+    role_label = role_label,
+    narrative_statement = narrative,
+    session_id = session_id,
+    review_revision = response$review_revision %||% NULL,
+    expression_checksum = as.character(response$expression_checksum %||% ""),
+    atlas_url = .studyAgentSlashAtlasCohortDraftUrl(config, session_id),
+    r_artifact_immutable = TRUE
+  )
+  write_json(handoff, file.path(artifact_dir, "atlas-cohort-definition-handoff.json"))
+  handoff
+}
+
 .studyAgentSlashAtlasWebApiRequest <- function(config, method, path, body = NULL) {
   if (!.studyAgentSlashAtlasReviewConfigured(config)) {
     stop("Atlas handoff needs STUDY_AGENT_WEBAPI_URL, STUDY_AGENT_WEBAPI_API_KEY, and STUDY_AGENT_ATLAS_URL.")
