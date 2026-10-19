@@ -16,7 +16,7 @@
       "Next step\n  Options:\n",
       if (isTRUE(atlas_action)) "    `atlas`    Review in Atlas vocabulary search (*recommended*)\n" else "",
       "    `json`     Use Atlas/ACP concept-set JSON\n",
-      "    `scope`    Restart with an updated clinical term\n",
+      "    `revise`   Change the clinical search term and rerun scope review\n",
       "    `source`   Choose another cohort source\n",
       "    `/ohdsi`   Ask a question about this step\n",
       "    `/back`    Return to the prior step"
@@ -523,7 +523,7 @@ Atlas cohort draft created from the validated R artifact.
       cat("Type `resume` after saving in Atlas, or `options` to return to the cohort-source menu.\n")
     }
   }
-  if (action %in% c("source", "scope", "")) return(list(action = "retry"))
+  if (action %in% c("source", "scope", "revise", "")) return(list(action = "retry"))
   if (identical(action, "csv") && !zero) {
     if (as.integer(review$candidate_count %||% 0L) > 500L && !identical(prompt("This CSV has more than 500 candidates; Atlas is recommended. Download anyway [type DOWNLOAD]: "), "DOWNLOAD")) return(list(action = "retry"))
     download_review()

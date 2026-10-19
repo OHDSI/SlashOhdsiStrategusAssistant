@@ -139,6 +139,11 @@ test_that("zero-candidate review retains the configured Atlas handoff", {
     "`atlas`    Review in Atlas vocabulary search",
     fixed = TRUE
   )
+  expect_match(
+    .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE),
+    "`revise`   Change the clinical search term and rerun scope review",
+    fixed = TRUE
+  )
   expect_false(grepl("csv=", .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE), fixed = TRUE))
   expect_false(grepl("atlas=", .studyAgentSlashPmcReviewActionPrompt(TRUE, FALSE), fixed = TRUE))
   expect_match(
