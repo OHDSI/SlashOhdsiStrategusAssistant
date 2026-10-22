@@ -176,7 +176,10 @@ test_that("direct acquisition can still offer an ACP scope draft", {
     cohort_methods = file.path("R", "strategus_cohort_methods_shell.R")
   )
   expected_counts <- c(incidence = 2L, cohort_methods = 3L)
-  source_root <- if (file.exists(file.path("R", "strategus_incidence_shell.R"))) "." else file.path("..", "..")
+  source_root <- "."
+  if (!file.exists(file.path(source_root, "R", "strategus_incidence_shell.R"))) {
+    skip("Static shell-source assertions require a package source checkout.")
+  }
   for (name in names(shell_paths)) {
     source <- paste(readLines(file.path(source_root, shell_paths[[name]]), warn = FALSE), collapse = "\n")
     expect_false(grepl("offer_scope_draft = isTRUE(ai_enabled) && !isTRUE(direct_acquisition_mode)", source, fixed = TRUE))
