@@ -26,10 +26,22 @@ StudyAgent](https://github.com/OHDSI/StudyAgent) project.
 
 Repository example scripts include:
 
-- `extras/demo_strategus_incidence_rate_no_ai.R`
-- `extras/demo_strategus_incidence_rate.R`
-- `extras/demo_strategus_cohort_method_no_ai.R`
-- `extras/demo_strategus_cohort_method.R`
+- `extras/demo_strategus_incidence_rate_no_ai.R` — sourceable no-AI incidence launcher
+- `extras/demo_strategus_incidence_rate_no_ai_resume.R` — resume the no-AI incidence demo
+- `extras/demo_strategus_incidence_rate.R` — sourceable AI-assisted incidence launcher
+- `extras/demo_strategus_incidence_rate_resume.R` — resume the incidence demo
+- `extras/demo_strategus_cohort_method_no_ai.R` — sourceable no-AI CohortMethod launcher
+- `extras/demo_strategus_cohort_method_no_ai_resume.R` — resume the no-AI CohortMethod demo
+- `extras/demo_strategus_cohort_method.R` — sourceable AI-assisted CohortMethod launcher
+- `extras/demo_strategus_cohort_method_resume.R` — resume the CohortMethod demo
+
+For a configured conference/demo environment, start a shell from RStudio with:
+
+```r
+source("extras/demo_strategus_incidence_rate.R")
+```
+
+Set `ACP_URL` and the optional Atlas/WebAPI integration variables in the R environment or a site-local configuration file before sourcing the launcher. The repository launchers do not contain API keys or destructive reset calls.
 
 For example, start an interactive no-AI incidence workflow with:
 

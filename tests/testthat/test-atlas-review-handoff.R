@@ -136,14 +136,137 @@ test_that("Atlas snapshot uses its reviewed scope domain and ignores a stale han
 test_that("zero-candidate review retains the configured Atlas handoff", {
   expect_match(
     .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE),
-    "atlas=review in Atlas",
+    "`atlas`    Review in Atlas vocabulary search",
+    fixed = TRUE
+  )
+  expect_match(
+    .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE),
+    "`revise`   Change the clinical search term and rerun scope review",
     fixed = TRUE
   )
   expect_false(grepl("csv=", .studyAgentSlashPmcReviewActionPrompt(TRUE, TRUE), fixed = TRUE))
   expect_false(grepl("atlas=", .studyAgentSlashPmcReviewActionPrompt(TRUE, FALSE), fixed = TRUE))
   expect_match(
     .studyAgentSlashPmcReviewActionPrompt(FALSE, TRUE, "full=request complete available set"),
-    "csv=download/validate, later=download and resume later, full=request complete available set",
+    "`csv`      Download and validate the CSV review",
     fixed = TRUE
   )
+})
+
+
+test_that("multi-criterion Atlas review advances one named lane at a time", {
+  old <- Sys.getenv(c("STUDY_AGENT_WEBAPI_URL", "STUDY_AGENT_WEBAPI_API_KEY", "STUDY_AGENT_ATLAS_URL"), unset = NA_character_)
+  on.exit({
+    for (name in names(old)) {
+      if (is.na(old[[name]])) Sys.unsetenv(name) else Sys.setenv(structure(old[[name]], names = name))
+    }
+  }, add = TRUE)
+  Sys.setenv(STUDY_AGENT_WEBAPI_URL = "https://webapi.example.org", STUDY_AGENT_WEBAPI_API_KEY = "test-key", STUDY_AGENT_ATLAS_URL = "https://atlas.example.org")
+  artifact_dir <- file.path(tempdir(), paste0("atlas-multi-", as.integer(Sys.time())))
+  dir.create(artifact_dir, recursive = TRUE)
+  on.exit(unlink(artifact_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  scope <- list(
+    index_event = "esketamine",
+    criterion_domains = list(esketamine = "Drug", `major depressive disorder` = "Condition"),
+    criterion_vocabularies = list(esketamine = list("RxNorm")),
+    supporting_condition_occurrence = list(concept_set = "major depressive disorder")
+  )
+  review <- list(review_id = "review-multi", concept_provenance = list(search_runs = list(
+    list(concept_set_name = "esketamine", returned_count = 11L),
+    list(concept_set_name = "major depressive disorder", returned_count = 20L)
+  )))
+  next_id <- 100L
+  registrations <- list()
+  local_mocked_bindings(
+    .studyAgentSlashAtlasWebApiRequest = function(config, method, path, body = NULL) {
+      if (identical(method, "POST") && identical(path, "/conceptset")) {
+        next_id <<- next_id + 1L
+        return(list(id = next_id))
+      }
+      if (identical(method, "POST")) {
+        registrations[[length(registrations) + 1L]] <<- body
+        return(list(session_id = paste0("session-", next_id)))
+      }
+      if (grepl("session-101", path, fixed = TRUE)) {
+        return(list(
+          state = "external_review_accepted", review_revision = 1L, expression_checksum = "drug",
+          expression = list(items = list(list(
+            concept = list(CONCEPT_ID = 111L, DOMAIN_ID = "Drug"),
+            isExcluded = FALSE, includeDescendants = TRUE, includeMapped = FALSE
+          )))
+        ))
+      }
+      if (grepl("session-102", path, fixed = TRUE)) {
+        return(list(
+          state = "external_review_accepted", review_revision = 1L, expression_checksum = "condition",
+          expression = list(items = list(list(
+            concept = list(CONCEPT_ID = 222L, DOMAIN_ID = "Condition"),
+            isExcluded = FALSE, includeDescendants = FALSE, includeMapped = FALSE
+          )))
+        ))
+      }
+      stop("unexpected request")
+    },
+    .package = "slashOhdsiStrategusAssistant"
+  )
+  prompt_answers <- c("", "", "", "", "")
+  prompt <- function(message) {
+    answer <- prompt_answers[[1L]]
+    prompt_answers <<- prompt_answers[-1L]
+    answer
+  }
+  write_json <- function(value, target) jsonlite::write_json(value, target, auto_unbox = TRUE)
+  first <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = TRUE)
+  expect_equal(first$status, "awaiting_atlas_review")
+  expect_equal(first$lane$key, "esketamine")
+  expect_true(registrations[[1]]$require_item_domain_metadata)
+  expect_equal(registrations[[1]]$review_lane$purpose, "Index event")
+  expect_equal(registrations[[1]]$scope$criterion_domains$esketamine, "Drug")
+  second <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = FALSE)
+  expect_equal(second$status, "awaiting_atlas_review")
+  expect_equal(second$lane$key, "major depressive disorder")
+  expect_equal(registrations[[2]]$review_lane$purpose, "Supporting Condition")
+  expect_equal(registrations[[2]]$scope$criterion_domains$`major depressive disorder`, "Condition")
+  complete <- .studyAgentSlashAtlasAdvanceMultiReview("target", "MDD patients taking esketamine", scope, review, artifact_dir, write_json, prompt, initialize = FALSE)
+  expect_equal(complete$status, "accepted")
+  expect_equal(vapply(complete$concept_sets, `[[`, character(1), "name"), c("esketamine", "major depressive disorder"))
+  expect_equal(vapply(complete$concept_sets, `[[`, character(1), "domain"), c("Drug", "Condition"))
+})
+
+test_that("validated R cohort creates a separate editable Atlas draft handoff", {
+  old <- Sys.getenv(c("STUDY_AGENT_WEBAPI_URL", "STUDY_AGENT_WEBAPI_API_KEY", "STUDY_AGENT_ATLAS_URL"), unset = NA_character_)
+  on.exit({
+    for (name in names(old)) {
+      if (is.na(old[[name]])) Sys.unsetenv(name) else Sys.setenv(structure(old[[name]], names = name))
+    }
+  }, add = TRUE)
+  Sys.setenv(STUDY_AGENT_WEBAPI_URL = "https://webapi.example.org", STUDY_AGENT_WEBAPI_API_KEY = "test-key", STUDY_AGENT_ATLAS_URL = "https://atlas.example.org")
+  artifact_dir <- file.path(tempdir(), paste0("atlas-cohort-draft-", as.integer(Sys.time())))
+  dir.create(artifact_dir, recursive = TRUE)
+  on.exit(unlink(artifact_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  approval_path <- file.path(artifact_dir, "concept-set-approval.json")
+  jsonlite::write_json(list(review_id = "review-validated"), approval_path, auto_unbox = TRUE)
+  expression <- list(PrimaryCriteria = list(CriteriaList = list()), ConceptSets = list())
+  local_mocked_bindings(
+    .studyAgentSlashAtlasWebApiRequest = function(config, method, path, body = NULL) {
+      expect_equal(method, "POST")
+      expect_equal(path, "/study-agent/v1/cohort-definition-sessions/external-r-draft")
+      expect_equal(body$narrative, "new users of esketamine")
+      expect_equal(body$role_label, "target")
+      expect_equal(body$review_id, "review-validated")
+      expect_equal(body$technical_validation$status, "passed")
+      expect_equal(body$expression, expression)
+      list(session_id = "cohort-session-1", review_revision = 2L, expression_checksum = "checksum")
+    },
+    .package = "slashOhdsiStrategusAssistant"
+  )
+  handoff <- .studyAgentSlashAtlasCreateCohortDraft(
+    "new users of esketamine", "target", expression, list(status = "passed"),
+    artifact_dir, approval_path,
+    function(value, target) jsonlite::write_json(value, target, auto_unbox = TRUE)
+  )
+  expect_match(handoff$atlas_url, "#/cohorts/new\\?studyAgentSession=cohort-session-1")
+  expect_match(handoff$atlas_url, "studyAgentExternalR=true", fixed = TRUE)
+  expect_true(handoff$r_artifact_immutable)
+  expect_true(file.exists(file.path(artifact_dir, "atlas-cohort-definition-handoff.json")))
 })

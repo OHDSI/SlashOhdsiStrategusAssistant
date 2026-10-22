@@ -1,38 +1,11 @@
-# Demo: no-AI Strategus incidence workflow
-#
-# Run this script from any writable directory after installing
-# slashOhdsiStrategusAssistant. During cohort selection choose `pl` to browse an
-# installed PhenotypeLibrary, `file`/`dir` for Circe JSON, or `db` for an existing
-# SIMPLE_EXPRESSION database cohort definition.
+source(file.path(dirname(sys.frame(1)$ofile), "conference_demo_common.R"))
 
-library(slashOhdsiStrategusAssistant)
-
-# outputDir controls the workflow artifacts and the default Strategus work/results roots.
-demo_root <- normalizePath(getwd(), winslash = "/", mustWork = TRUE)
-banner_path <- system.file("banner", "ohdsi-logo-ascii.txt", package = "slashOhdsiStrategusAssistant")
-if (!nzchar(banner_path)) stop("Installed package banner asset was not found.")
-
-output_dir <- file.path(demo_root, "demo-strategus-cohort-incidence-no-ai")
-
-# To start from scratch, uncomment the next line. It removes only this demo output.
-# unlink(output_dir, recursive = TRUE, force = TRUE)
+demo_root <- .studyAgentDemoRoot()
 
 slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-  outputDir = output_dir,
+  outputDir = file.path(demo_root, "demo-strategus-cohort-incidence-no-ai"),
   aiSupport = "disabled",
-  bannerPath = banner_path,
-  showBanner = TRUE,
+  bannerPath = .studyAgentDemoBanner(),
+  showBanner = FALSE,
   executionTableDisplay = "console"
 )
-
-# Resume a prior run:
-# slashOhdsiStrategusAssistant::runStrategusIncidenceShell(
-#   outputDir = output_dir,
-#   aiSupport = "disabled",
-#   resume = TRUE,
-#   allowCache = TRUE,
-#   promptOnCache = TRUE,
-#   bannerPath = banner_path,
-#   showBanner = TRUE,
-#   executionTableDisplay = "console"
-# )

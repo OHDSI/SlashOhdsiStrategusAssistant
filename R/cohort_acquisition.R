@@ -163,25 +163,115 @@
   }
   repeat {
     prompt <- if (isTRUE(allow_index)) {
-      sprintf(
-        "Source for %s cohort [ai=agentic search (default), create=new definition%s, pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ",
-        role_label,
-        if (isTRUE(resume_pending)) ", resume=resume saved review" else ""
+      paste0(
+        sprintf("Source for %s cohort\n", role_label),
+        "  Options:\n",
+        "    `ai`       Agentic phenotype search (default)\n",
+        "    `create`   Create a new definition\n",
+        if (isTRUE(resume_pending)) "    `resume`   Continue the saved Atlas review (*recommended*)\n" else "",
+        "    `pl`       Browse the Phenotype Library\n",
+        "    `file`     Import a cohort-definition JSON file\n",
+        "    `dir`      Import cohort-definition JSON files from a folder\n",
+        "    `db`       Use an existing database cohort\n",
+        "    `/ohdsi`   Ask a question about this step"
       )
     } else {
-      sprintf("Source for %s cohort [pl=Phenotype Library, file=JSON file, dir=directory, db=database cohort]: ", role_label)
+      paste0(
+        sprintf("Source for %s cohort\n", role_label),
+        "  Options:\n",
+        "    `pl`       Browse the Phenotype Library\n",
+        "    `file`     Import a cohort-definition JSON file\n",
+        "    `dir`      Import cohort-definition JSON files from a folder\n",
+        "    `db`       Use an existing database cohort"
+      )
     }
     entered <- trimws(readline_with_navigation(prompt))
     if (is_back_signal(entered)) return(entered)
     lowered <- tolower(entered)
-    if (isTRUE(allow_index) && lowered %in% c("create", "new", "make", "computable", if (isTRUE(resume_pending)) "resume" else NULL)) return("create")
+    if (isTRUE(allow_index) && isTRUE(resume_pending) && lowered %in% c("resume", "continue")) return("resume")
+    if (isTRUE(allow_index) && lowered %in% c("create", "new", "make", "computable")) return("create")
     if (isTRUE(allow_index) && (!nzchar(lowered) || lowered %in% c("ai", "index", "search", "s", "recommend", "agentic"))) return("index")
     if (lowered %in% c("db", "database", "existing")) return("database")
     if (lowered %in% c("pl", "phenotypelibrary", "phenotype_library", "library")) return("phenotype_library")
     if (lowered %in% c("file", "json", "local")) return("file")
     if (lowered %in% c("dir", "directory", "folder")) return("directory")
-    cat(if (isTRUE(allow_index)) "Choose ai, create, pl, file, dir, or db, or press Enter for the default.\n" else "Choose pl, file, dir, or db.\n")
+    cat(if (isTRUE(allow_index)) "Choose `ai`, `create`, `pl`, `file`, `dir`, or `db`; press Enter for agentic search.\n" else "Choose `pl`, `file`, `dir`, or `db`.\n")
   }
+}
+
+.studyAgentSlashAdviceNextPrompt <- function(role_label) {
+  paste0(
+    "Next step\n  Options:\n",
+    "    `rewrite`  Revise the ", role_label, " cohort statement\n",
+    "    `source`   Return to the cohort-source menu\n",
+    "    `/ohdsi`   Ask a question about this step\n",
+    "    `/back`    Return to the prior step"
+  )
+}
+
+
+.studyAgentSlashChoosePhenotypeRecommendationIndices <- function(recommendations,
+                                                                  role_label,
+                                                                  allow_multiple = FALSE,
+                                                                  readline_with_navigation,
+                                                                  is_back_signal) {
+  if (length(recommendations) == 0L) return(integer(0))
+  selected <- integer(0)
+  role_text <- tolower(trimws(as.character(role_label %||% "cohort")))
+  recommendation_value <- function(rec, names) {
+    for (name in names) {
+      value <- rec[[name]] %||% NULL
+      value <- trimws(as.character(value %||% ""))
+      if (nzchar(value)) return(value)
+    }
+    ""
+  }
+  repeat {
+    prompt <- sprintf(
+      "Enter a number to see more details about a candidate listed above, or 0 if none look relevant for the %s: ",
+      role_text
+    )
+    entered <- trimws(as.character(readline_with_navigation(prompt) %||% ""))
+    if (is_back_signal(entered)) return(entered)
+    index <- suppressWarnings(as.integer(entered))
+    if (is.na(index) || index < 0L || index > length(recommendations)) {
+      cat(sprintf("Enter a number from 0 to %s.\\n", length(recommendations)))
+      next
+    }
+    if (index == 0L) return(selected)
+    rec <- recommendations[[index]]
+    cat("\nCandidate details\n")
+    cat(sprintf("  Name: %s\n", recommendation_value(rec, c("phenotype_name", "title", "name"))))
+    cat(sprintf("  ID: %s\n", recommendation_value(rec, c("phenotype_id", "id", "identifier"))))
+    status <- recommendation_value(rec, c("computability_status", "execution_status"))
+    if (nzchar(status)) cat(sprintf("  Computability: %s\n", status))
+    rationale <- recommendation_value(rec, c("justification", "rationale", "description", "summary"))
+    if (nzchar(rationale)) cat(sprintf("  Why it was suggested: %s\n", rationale))
+    source <- recommendation_value(rec, c("source", "source_name", "library"))
+    if (nzchar(source)) cat(sprintf("  Source: %s\n", source))
+    accepted <- tolower(trimws(as.character(readline_with_navigation("Accept this candidate? [y/N] ") %||% "")))
+    if (is_back_signal(accepted)) return(accepted)
+    if (accepted %in% c("y", "yes")) {
+      selected <- unique(c(selected, index))
+      if (!isTRUE(allow_multiple)) return(selected)
+      more <- tolower(trimws(as.character(readline_with_navigation("Review another candidate? [y/N] ") %||% "")))
+      if (is_back_signal(more)) return(more)
+      if (!(more %in% c("y", "yes"))) return(selected)
+    }
+  }
+}
+
+.studyAgentSlashPrintCohortRoleSummary <- function(active_role, role_statements) {
+  statements <- role_statements %||% list()
+  values <- vapply(statements, function(value) trimws(as.character(value %||% "")), character(1))
+  values <- values[nzchar(values)]
+  if (length(values) == 0) return(invisible(NULL))
+  cat("\nStudy plan\n")
+  for (role in names(values)) {
+    cat(sprintf("  %s: %s\n", tools::toTitleCase(gsub("_", " ", role)), values[[role]]))
+  }
+  cat(sprintf("Now selecting the %s cohort.\n", active_role))
+  invisible(NULL)
 }
 
 .studyAgentSlashPromptDatabaseCohortImports <- function(role_label,
@@ -505,7 +595,7 @@
                                                          prompt_phenotype_library_imports = NULL,
                                                          prompt_create_computable = NULL,
                                                          selection_record_from_import = .studyAgentSlashSelectionRecordFromImport) {
-  if (!(source_mode %in% c("database", "file", "directory", "phenotype_library", "create"))) return(NULL)
+  if (!(source_mode %in% c("database", "file", "directory", "phenotype_library", "create", "resume"))) return(NULL)
   if (isTRUE(interactive)) {
     step_message <- step_messages[[source_mode]] %||% NULL
     if (nzchar(trimws(as.character(step_message %||% "")))) {
@@ -518,10 +608,22 @@
     file = prompt_file_imports(role_label, allow_multiple = allow_multiple),
     directory = prompt_directory_imports(role_label, allow_multiple = allow_multiple),
     phenotype_library = prompt_phenotype_library_imports(role_label, allow_multiple = allow_multiple),
-    create = prompt_create_computable(role_label, allow_multiple = allow_multiple)
+    create = prompt_create_computable(role_label, allow_multiple = allow_multiple, resume_saved_review = FALSE),
+    resume = prompt_create_computable(role_label, allow_multiple = allow_multiple, resume_saved_review = TRUE)
   )
   if (inherits(imported, "workflow_navigation_signal")) return(imported)
   if (is.list(imported) && identical(imported$action %||% "", "handled")) return(imported)
+  if (is.list(imported) && identical(imported$action %||% "", "resume")) {
+    return(.studyAgentSlashAcquireImportedRoleSelection(
+      source_mode = "resume", role_label = role_label, allow_multiple = allow_multiple,
+      interactive = interactive, step_messages = step_messages,
+      prompt_database_imports = prompt_database_imports, prompt_file_imports = prompt_file_imports,
+      prompt_directory_imports = prompt_directory_imports,
+      prompt_phenotype_library_imports = prompt_phenotype_library_imports,
+      prompt_create_computable = prompt_create_computable,
+      selection_record_from_import = selection_record_from_import
+    ))
+  }
   if (is.list(imported) && identical(imported$action %||% "", "retry")) return(imported)
   if (is.null(imported) || length(imported) == 0) {
     return(list(action = "retry", imported = imported))
@@ -544,7 +646,8 @@
                                                           interactive = TRUE,
                                                           readline_with_navigation = readline,
                                                           is_back_signal = function(value) FALSE,
-                                                          write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE)) {
+                                                          write_json = function(x, path) jsonlite::write_json(x, path, pretty = TRUE, auto_unbox = TRUE),
+                                                          offer_scope_draft = FALSE) {
   if (!isTRUE(interactive)) stop("Creating a phenotype definition requires interactive scope and concept-set review.")
   if (!slashOhdsiAcpClient::acp_is_connected(client)) stop("ACP bridge unavailable; connect ACP before creating a phenotype definition.")
   artifact_dir <- file.path(output_dir, "phenotype-make-computable", tolower(role_label))
@@ -556,10 +659,38 @@
     sub("^['\\\"](.*)['\\\"]$", "\\1", value)
   }
   default_narrative <- trimws(as.character(role_statement %||% ""))
-  narrative <- prompt(sprintf("Working local OMOP cohort statement for the new %s [%s]: ", tolower(role_label), default_narrative))
-  cat("You are authoring a new local OMOP cohort definition. This statement is not an imported source phenotype definition.\n")
+  narrative <- prompt(sprintf("Press Enter to build a computable phenotype for the %s, or type a revised statement [%s]: ", tolower(role_label), default_narrative))
   if (!nzchar(narrative)) narrative <- default_narrative
   if (!nzchar(narrative)) return(list(action = "retry"))
+  scope_defaults <- list()
+  if (isTRUE(offer_scope_draft)) {
+    draft_choice <- tolower(prompt("Ask AI to suggest an editable starting scope for this supported cohort pattern? [Y/n]: "))
+    if (is_back_signal(draft_choice)) return(draft_choice)
+    if (!draft_choice %in% c("n", "no")) {
+      scope_draft_response <- .studyAgentSlashAcpPhenotypeMakeComputable(
+        client, narrative_statement = narrative, confirmed_scope = FALSE, scope_draft = TRUE
+      )
+      write_json(scope_draft_response, file.path(artifact_dir, "scope-draft-response.json"))
+      suggested_scope <- scope_draft_response$scope_draft %||% list()
+      if (identical(suggested_scope$status %||% "", "supported")) {
+        cat("\nAI scope suggestion (unconfirmed; review and edit every value):\n")
+        cat(sprintf("- Index event: %s (%s)\n", suggested_scope$index_event %||% "", suggested_scope$domain %||% ""))
+        cat(sprintf("- Entry rule: %s; prior observation: %s days; exit: %s\n", suggested_scope$entry_limit %||% "", suggested_scope$prior_observation_days %||% "", suggested_scope$exit_strategy %||% ""))
+        if (nzchar(as.character(suggested_scope$vocabulary_restriction %||% ""))) cat(sprintf("- Vocabulary restriction: %s\n", suggested_scope$vocabulary_restriction))
+        supporting_term <- trimws(as.character(suggested_scope$supporting_condition_term %||% ""))
+        if (nzchar(supporting_term)) cat(sprintf("- Suggested supporting Condition: %s (you will choose its evidence window)\n", supporting_term))
+        visit_term <- trimws(as.character(suggested_scope$visit_term %||% ""))
+        if (nzchar(visit_term)) cat(sprintf("- Suggested Visit restriction: %s (you will choose how overlap is used)\n", visit_term))
+        if (nzchar(as.character(suggested_scope$rationale %||% ""))) cat(sprintf("- Why this narrow pattern fits: %s\n", suggested_scope$rationale))
+        accept_draft <- tolower(prompt("Use this as editable checklist defaults? [Y/n]: "))
+        if (is_back_signal(accept_draft)) return(accept_draft)
+        if (!accept_draft %in% c("n", "no")) scope_defaults <- suggested_scope
+      } else {
+        cat("\nAI did not propose a supported simple scope. Continue with the checklist; use Atlas for richer cohort logic.\n")
+        if (nzchar(as.character(suggested_scope$rationale %||% ""))) cat(sprintf("Reason: %s\n", suggested_scope$rationale))
+      }
+    }
+  }
   checklist <- .studyAgentSlashAcpPhenotypeMakeComputable(client, narrative_statement = narrative, confirmed_scope = FALSE)
   write_json(checklist, file.path(artifact_dir, "scope-checklist.json"))
   source_conversion_dir <- file.path(output_dir, "phenotype-conversion", tolower(role_label))
@@ -585,15 +716,41 @@
       cat("Use these only as review context. You must still choose and confirm every scope value.\n")
     }
   }
-  cat("\nACP returned a scope checklist. No definition has been created.\n")
-  cat("Answer each scope question deliberately. Press /back to return to cohort-source selection.\n")
-  index_event <- prompt("Index event clinical term: ")
+  if (length(scope_defaults)) {
+    cat("\nPlease review the AI-suggested scope checklist defaults before creating the computable definition.\n")
+  } else {
+    cat("\nYou will now complete a scope checklist before creating the computable definition.\n")
+  }
+  cat("Answer each scope question deliberately.\n")
+  proceed <- prompt("Press Enter to continue or /back to return to cohort-source selection: ")
+  if (is_back_signal(proceed)) return(proceed)
+  cat("Provide a concise clinical term or phrase describing the index event or exposure.\n")
+  draft_index_event <- trimws(as.character(scope_defaults$index_event %||% ""))
+  index_prompt <- if (nzchar(draft_index_event)) sprintf("Index event clinical term [%s]: ", draft_index_event) else "Index event clinical term: "
+  index_event <- prompt(index_prompt)
   if (is_back_signal(index_event)) return(index_event)
-  domain <- prompt("Index event OMOP domain (Condition, Drug, Procedure, Measurement, Observation, Visit, or Device): ")
-  if (is_back_signal(domain)) return(domain)
+  if (!nzchar(index_event)) index_event <- draft_index_event
+  if (!nzchar(index_event)) { cat("Enter an index event term before continuing.\n"); return(list(action = "retry")) }
+  valid_domains <- c("Condition", "Drug", "Procedure", "Measurement", "Observation", "Visit", "Device")
+  draft_domain <- trimws(as.character(scope_defaults$domain %||% ""))
   repeat {
-    entry_limit_raw <- prompt("Entry-event limit [First or All]: ")
+    domain_prompt <- if (nzchar(draft_domain)) sprintf("Index event OMOP domain [%s]: ", draft_domain) else "Index event OMOP domain (Condition, Drug, Procedure, Measurement, Observation, Visit, or Device): "
+    domain_raw <- prompt(domain_prompt)
+    if (is_back_signal(domain_raw)) return(domain_raw)
+    if (!nzchar(domain_raw)) domain_raw <- draft_domain
+    domain_index <- match(tolower(trimws(domain_raw)), tolower(valid_domains))
+    if (!is.na(domain_index)) {
+      domain <- valid_domains[[domain_index]]
+      break
+    }
+    cat(sprintf("Enter one of: %s.\n", paste(valid_domains, collapse = ", ")))
+  }
+  draft_entry_limit <- trimws(as.character(scope_defaults$entry_limit %||% ""))
+  repeat {
+    entry_prompt <- if (nzchar(draft_entry_limit)) sprintf("Entry-event limit [%s]: ", draft_entry_limit) else "Entry-event limit [First or All]: "
+    entry_limit_raw <- prompt(entry_prompt)
     if (is_back_signal(entry_limit_raw)) return(entry_limit_raw)
+    if (!nzchar(entry_limit_raw)) entry_limit_raw <- draft_entry_limit
     entry_limit_key <- tolower(trimws(entry_limit_raw))
     if (entry_limit_key %in% c("first", "all")) {
       entry_limit <- if (identical(entry_limit_key, "first")) "First" else "All"
@@ -601,23 +758,35 @@
     }
     cat("Enter First or All. This field has no default because it changes cohort-entry behavior.\n")
   }
+  draft_prior <- scope_defaults$prior_observation_days %||% 365L
   repeat {
-    prior_raw <- prompt("Required prior continuous observation days [0]: ")
+    prior_raw <- prompt(sprintf("Required prior continuous observation days [%s]: ", draft_prior))
     if (is_back_signal(prior_raw)) return(prior_raw)
     if (!nzchar(trimws(prior_raw))) {
-      prior_observation <- 0L
+      prior_observation <- as.integer(draft_prior)
       break
     }
     prior_observation <- suppressWarnings(as.integer(prior_raw))
     if (!is.na(prior_observation) && prior_observation >= 0L) break
-    cat("Enter a non-negative whole number, or press Enter to use 0.\n")
+    cat("Enter a non-negative whole number, or press Enter to use 365.\n")
   }
-  vocabulary <- prompt("Optional index-event vocabulary restriction (for example RxNorm; press Enter for none): ")
+  draft_vocabulary <- trimws(as.character(scope_defaults$vocabulary_restriction %||% ""))
+  vocabulary_prompt <- if (nzchar(draft_vocabulary)) sprintf("Optional index-event vocabulary restriction [%s; Enter=use suggested, none=clear]: ", draft_vocabulary) else "Optional index-event vocabulary restriction (for example RxNorm; press Enter for none): "
+  vocabulary <- prompt(vocabulary_prompt)
   if (is_back_signal(vocabulary)) return(vocabulary)
-  exit_strategy <- prompt("Exit strategy [observation]: ")
-  if (is_back_signal(exit_strategy)) return(exit_strategy)
-  if (!nzchar(exit_strategy)) exit_strategy <- "observation"
-  if (!identical(exit_strategy, "observation")) stop("This guided path currently supports exit strategy observation only.")
+  if (!nzchar(vocabulary)) vocabulary <- draft_vocabulary
+  if (tolower(vocabulary) %in% c("none", "clear")) vocabulary <- ""
+  repeat {
+    cat("How will persons exit the cohort?\n")
+    cat("  `observation` End at the end of continuous observation (default; currently supported).\n")
+    exit_strategy <- tolower(prompt("Exit strategy [observation]: "))
+    if (is_back_signal(exit_strategy)) return(exit_strategy)
+    if (!nzchar(exit_strategy) || identical(exit_strategy, "observation")) {
+      exit_strategy <- "observation"
+      break
+    }
+    cat("This guided path currently supports only `observation`. Enter observation or press Enter.\n")
+  }
   criterion_domains <- setNames(list(domain), index_event)
   scope <- list(index_event = index_event, criterion_domains = criterion_domains, entry_limit = entry_limit,
                 prior_observation = prior_observation, index_day_boundary = "included", windows = "none",
@@ -651,23 +820,63 @@
     }
   }
   supporting <- "no"
-  if (!use_temporal %in% c("y", "yes")) {
-    supporting <- tolower(prompt("Require a supporting Condition occurrence around the index event? [y/N]: "))
+  draft_supporting_term <- trimws(as.character(scope_defaults$supporting_condition_term %||% ""))
+  draft_visit_term <- trimws(as.character(scope_defaults$visit_term %||% ""))
+  if (!use_temporal %in% c("y", "yes") && !nzchar(draft_visit_term)) {
+    supporting_prompt <- if (nzchar(draft_supporting_term)) {
+      sprintf("Require suggested supporting Condition occurrence [%s] around the index event? [Y/n]: ", draft_supporting_term)
+    } else {
+      "Require a supporting Condition occurrence around the index event? [y/N]: "
+    }
+    supporting <- tolower(prompt(supporting_prompt))
     if (is_back_signal(supporting)) return(supporting)
+    if (!nzchar(supporting) && nzchar(draft_supporting_term)) supporting <- "yes"
   }
   if (supporting %in% c("y", "yes")) {
-    supporting_term <- prompt("Supporting Condition clinical term: ")
+    supporting_term_prompt <- if (nzchar(draft_supporting_term)) {
+      sprintf("Supporting Condition clinical term [%s]: ", draft_supporting_term)
+    } else {
+      "Supporting Condition clinical term: "
+    }
+    supporting_term <- prompt(supporting_term_prompt)
     if (is_back_signal(supporting_term)) return(supporting_term)
-    start_days_raw <- prompt("Supporting-condition window start days relative to index (for example -180): ")
-    if (is_back_signal(start_days_raw)) return(start_days_raw)
-    end_days_raw <- prompt("Supporting-condition window end days relative to index [0]: ")
-    if (is_back_signal(end_days_raw)) return(end_days_raw)
-    start_days <- suppressWarnings(as.integer(start_days_raw))
-    end_days <- if (!nzchar(end_days_raw)) 0L else suppressWarnings(as.integer(end_days_raw))
-    if (is.na(start_days) || is.na(end_days) || start_days > end_days || end_days > 0L) stop("Use integer supporting-condition bounds with start <= end <= 0.")
+    if (!nzchar(supporting_term)) supporting_term <- draft_supporting_term
+    if (!nzchar(supporting_term)) stop("A supporting Condition term is required when supporting evidence is selected.")
+    repeat {
+      start_days_raw <- prompt("Supporting-condition window start days relative to index (for example -180; required): ")
+      if (is_back_signal(start_days_raw)) return(start_days_raw)
+      end_days_raw <- prompt("Supporting-condition window end days relative to index [0]: ")
+      if (is_back_signal(end_days_raw)) return(end_days_raw)
+      start_days <- suppressWarnings(as.integer(start_days_raw))
+      end_days <- if (!nzchar(end_days_raw)) 0L else suppressWarnings(as.integer(end_days_raw))
+      if (!is.na(start_days) && !is.na(end_days) && start_days <= end_days && end_days <= 0L) break
+      cat("Enter integer supporting-condition bounds with start <= end <= 0. The start day is required; for example, -180.\n")
+    }
     scope$criterion_domains[[supporting_term]] <- "Condition"
     scope$supporting_condition_occurrence <- list(concept_set = supporting_term, start_days = start_days, end_days = end_days, anchor = "index_start")
     scope$multi_domain_entry_policy <- "supporting_evidence_only"
+  }
+  if (!use_temporal %in% c("y", "yes") && nzchar(draft_visit_term)) {
+    visit_choice <- tolower(prompt(sprintf("Require suggested Visit restriction [%s] overlapping the index event? [Y/n]: ", draft_visit_term)))
+    if (is_back_signal(visit_choice)) return(visit_choice)
+    if (!visit_choice %in% c("n", "no")) {
+      visit_term_prompt <- sprintf("Visit restriction clinical term [%s]: ", draft_visit_term)
+      visit_term <- prompt(visit_term_prompt)
+      if (is_back_signal(visit_term)) return(visit_term)
+      if (!nzchar(visit_term)) visit_term <- draft_visit_term
+      repeat {
+        cat("How should the Visit overlap be used?\n")
+        cat("  `entry` Qualify the index Condition only when it overlaps the Visit.\n")
+        cat("  `attrition` Keep the index Condition as entry, then require an overlapping Visit.\n")
+        visit_overlap_mode <- tolower(prompt("Visit overlap mode [entry or attrition]: "))
+        if (is_back_signal(visit_overlap_mode)) return(visit_overlap_mode)
+        if (visit_overlap_mode %in% c("entry", "attrition")) break
+        cat("Enter `entry` or `attrition`. This decision is required before concept review.\n")
+      }
+      scope$criterion_domains[[visit_term]] <- "Visit"
+      scope$visit_overlap <- TRUE
+      scope$visit_overlap_mode <- visit_overlap_mode
+    }
   }
   write_json(scope, file.path(artifact_dir, "confirmed-scope.json"))
   cat(sprintf("Confirmed scope draft written to %s.\n", file.path(artifact_dir, "confirmed-scope.json")))
@@ -728,7 +937,7 @@
         cat(sprintf("Atlas-corrected concept-set policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact Atlas-corrected concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, corrected_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
       }
       if (identical(review_choice, "mapping") && !identical(atlas_mode, "required")) {
         chosen <- prompt(sprintf("Reviewed mapping CSV path [%s]: ", mapping_review$csv))
@@ -742,7 +951,7 @@
         cat(sprintf("Exact mapping-derived policy saved to %s.\n", approval_path))
         if (!identical(prompt("I explicitly approve this exact concept-set policy [type APPROVE]: "), "APPROVE")) return(list(action = "retry"))
         return(.studyAgentSlashPmcEmit(client, narrative, scope, converted$concept_sets, artifact_dir,
-          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path))
+          imported_definition_dir, write_json, readline_with_navigation, approval_path = approval_path, role_label = role_label))
       }
     }
   }

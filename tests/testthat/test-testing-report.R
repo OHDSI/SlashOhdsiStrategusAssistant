@@ -1,6 +1,6 @@
 test_that("testing report renders conceptual coverage to Markdown", {
   path <- tempfile(fileext = ".md")
-  project_path <- normalizePath(file.path(testthat::test_path(), "..", ".."), winslash = "/", mustWork = TRUE)
+  project_path <- normalizePath(file.path(testthat::test_path(), "..", ".."), winslash = "/", mustWork = FALSE)
   if (!file.exists(file.path(project_path, "DESCRIPTION"))) {
       skip("strategusTestingReport requires a source package directory.")
   }
