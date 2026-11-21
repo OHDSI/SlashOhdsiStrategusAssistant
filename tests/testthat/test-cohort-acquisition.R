@@ -168,6 +168,61 @@ test_that("reviewed concept CSV rejects policy marks without a root decision", {
   expect_error(slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(csv_path, manifest_path, "review-2"), "without review_include_concept")
 })
 
+test_that("mapping evidence review persists eligibility and rejects unconfirmed-domain selections", {
+  review_dir <- tempfile("mapping-evidence-")
+  dir.create(review_dir)
+  on.exit(unlink(review_dir, recursive = TRUE, force = TRUE), add = TRUE)
+
+  mapping_evidence <- list(
+    status = "ok",
+    code_results = list(list(
+      status = "mapped",
+      source_vocabulary_id = "ICD10CM",
+      source_code = "A00",
+      standard_candidates = list(
+        list(
+          concept_id = 1001L, concept_name = "Eligible condition",
+          domain_id = "Condition", vocabulary_id = "SNOMED",
+          mapping_method = "Maps to", domain_policy_status = "eligible_for_review",
+          atlas_concept = list(CONCEPT_ID = 1001L)
+        ),
+        list(
+          concept_id = 1002L, concept_name = "Ineligible procedure",
+          domain_id = "Procedure", vocabulary_id = "SNOMED",
+          mapping_method = "Maps to", domain_policy_status = "unexpected_domain",
+          atlas_concept = list(CONCEPT_ID = 1002L)
+        )
+      )
+    ))
+  )
+
+  review <- slashOhdsiStrategusAssistant:::.studyAgentSlashPmcWriteMappingEvidenceReview(
+    mapping_evidence, "source evidence", review_dir,
+    function(value, path) jsonlite::write_json(value, path, auto_unbox = TRUE)
+  )
+  manifest <- jsonlite::read_json(review$manifest, simplifyVector = FALSE)
+
+  expect_identical(manifest$source, "phenotype_code_mapping_evidence")
+  expect_identical(manifest$eligible_candidate_keys, "1001|Condition")
+  expect_match(manifest$selection_guardrail, "unapproved mapping evidence", fixed = TRUE)
+
+  rows <- utils::read.csv(review$csv, check.names = FALSE, stringsAsFactors = FALSE)
+  rows$review_include_concept[rows$concept_id == 1002L] <- "x"
+  utils::write.csv(rows, review$csv, row.names = FALSE, na = "")
+  expect_error(
+    slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(review$csv, review$manifest, review$review_id),
+    "not eligible for the confirmed-domain mapping review"
+  )
+
+  rows$review_include_concept[rows$concept_id == 1002L] <- ""
+  rows$review_include_concept[rows$concept_id == 1001L] <- "x"
+  utils::write.csv(rows, review$csv, row.names = FALSE, na = "")
+  converted <- slashOhdsiStrategusAssistant:::.studyAgentSlashPmcReviewCsv(
+    review$csv, review$manifest, review$review_id
+  )
+  expect_identical(converted$concept_sets[[1]]$items[[1]]$concept_id, 1001L)
+})
+
 
 test_that("source selector presents readable choices and a pending Atlas resume", {
   prompts <- character()
