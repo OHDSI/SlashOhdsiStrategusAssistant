@@ -845,12 +845,20 @@
     repeat {
       start_days_raw <- prompt("Supporting-condition window start days relative to index (for example -180; required): ")
       if (is_back_signal(start_days_raw)) return(start_days_raw)
+      start_days <- suppressWarnings(as.integer(start_days_raw))
+      if (!is.na(start_days)) break
+      cat("Enter an integer supporting-condition start day. The start day is required; for example, -180.\n")
+    }
+    repeat {
       end_days_raw <- prompt("Supporting-condition window end days relative to index [0]: ")
       if (is_back_signal(end_days_raw)) return(end_days_raw)
-      start_days <- suppressWarnings(as.integer(start_days_raw))
       end_days <- if (!nzchar(end_days_raw)) 0L else suppressWarnings(as.integer(end_days_raw))
-      if (!is.na(start_days) && !is.na(end_days) && start_days <= end_days && end_days <= 0L) break
-      cat("Enter integer supporting-condition bounds with start <= end <= 0. The start day is required; for example, -180.\n")
+      if (is.na(end_days)) {
+        cat("Enter an integer supporting-condition end day, or press Enter to use 0.\n")
+        next
+      }
+      if (start_days <= end_days && end_days <= 0L) break
+      cat("Enter an end day where start <= end <= 0.\n")
     }
     scope$criterion_domains[[supporting_term]] <- "Condition"
     scope$supporting_condition_occurrence <- list(concept_set = supporting_term, start_days = start_days, end_days = end_days, anchor = "index_start")
