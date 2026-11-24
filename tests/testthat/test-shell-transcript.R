@@ -536,6 +536,35 @@ testthat::test_that("incidence no-AI workflow acquires local cohorts and generat
     "createOutcomeDef\\(id = as.integer\\(id\\), name = row\\$cohortName\\[1\\], cohortId = as.integer\\(id\\)\\)",
     incidence_script
   )))
+  testthat::expect_true(any(grepl("incidence_result_validation.json", incidence_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("incidence_zero_outcome_validation.sql", incidence_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("ANALYTICAL REVIEW REQUIRED", incidence_script, fixed = TRUE)))
+  testthat::expect_silent(parse(file = file.path(output_dir, "scripts", "07_incidence_spec.R")))
+  generated_expressions <- as.list(parse(file = file.path(output_dir, "scripts", "07_incidence_spec.R")))
+  validation_definition <- Filter(function(expression) {
+    is.call(expression) && identical(as.character(expression[[1]]), "<-") &&
+      is.symbol(expression[[2]]) && identical(as.character(expression[[2]]), "write_incidence_analytical_validation")
+  }, generated_expressions)
+  testthat::expect_length(validation_definition, 1L)
+  validation_root <- tempfile("incidence-zero-outcomes-")
+  validation_results_root <- file.path(validation_root, "results")
+  validation_settings_dir <- file.path(validation_root, "analysis-settings")
+  dir.create(file.path(validation_results_root, "CohortIncidenceModule"), recursive = TRUE)
+  dir.create(validation_settings_dir, recursive = TRUE)
+  utils::write.csv(data.frame(OUTCOMES = c(0L, 0L)), file.path(validation_results_root, "CohortIncidenceModule", "ci_incidence_summary.csv"), row.names = FALSE)
+  validation_environment <- new.env(parent = asNamespace("slashOhdsiStrategusAssistant"))
+  validation_environment$analysis_settings_dir <- validation_settings_dir
+  validation_environment$resolved_results_root <- validation_results_root
+  validation_environment$exec <- list(workDatabaseSchema = "work", cohortTable = "cohort")
+  validation_environment$connectionDetails <- list(dbms = "postgresql")
+  validation_environment$target_ids <- 701L
+  validation_environment$outcome_ids <- 702L
+  eval(validation_definition[[1]], envir = validation_environment)
+  validation <- validation_environment$write_incidence_analytical_validation(list(overall_status = "success"))
+  testthat::expect_identical(validation$analytical_validation_status, "review_required")
+  testthat::expect_true(file.exists(file.path(validation_settings_dir, "incidence_result_validation.json")))
+  validation_sql <- paste(readLines(file.path(validation_settings_dir, "incidence_zero_outcome_validation.sql"), warn = FALSE), collapse = "\n")
+  testthat::expect_match(validation_sql, "INTERVAL'1 day'", fixed = TRUE)
   state <- jsonlite::read_json(file.path(output_dir, "outputs", "study_agent_state.json"), simplifyVector = FALSE)
   testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
   testthat::expect_true(state$skip_phenotype_improvements)

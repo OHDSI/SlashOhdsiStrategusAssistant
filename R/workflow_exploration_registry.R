@@ -843,6 +843,8 @@
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "execution_settings_json", file.path(base_dir, "strategus-execution-settings.json"), base_dir, tags = c("config", "execution"), preview_kind = "json")
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "analysis_settings_dir", file.path(base_dir, "analysis-settings"), base_dir, tags = c("analysis", "settings"), preview_kind = "dir")
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "analysis_specification_json", file.path(base_dir, "analysis-settings", "analysisSpecification.json"), base_dir, step_id = if (identical(project_state$workflow_type %||% "", "strategus_cohort_methods")) "cm_spec" else "incidence_spec", tags = c("analysis", "strategus"), preview_kind = "json")
+  registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "incidence_result_validation_json", file.path(base_dir, "analysis-settings", "incidence_result_validation.json"), base_dir, step_id = "incidence_spec", tags = c("analysis", "incidence", "analytical_validation"), preview_kind = "json")
+  registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "incidence_zero_outcome_validation_sql", file.path(base_dir, "analysis-settings", "incidence_zero_outcome_validation.sql"), base_dir, step_id = "incidence_spec", tags = c("analysis", "incidence", "analytical_validation", "sql"), preview_kind = "text")
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "strategus_execute_result_rds", file.path(base_dir, "analysis-settings", "strategus_execute_result.rds"), base_dir, step_id = "cm_spec", tags = c("analysis", "strategus"), preview_kind = "rds")
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "cm_analysis_state_json", file.path(base_dir, "outputs", "cm_analysis_state.json"), base_dir, step_id = "cm_spec", tags = c("analysis", "cohort_method"), preview_kind = "json")
   registry <- .studyAgentSlashMaybeRegisterKnownArtifact(registry, "selected_cohorts_csv", file.path(base_dir, "selected-cohorts", "Cohorts.csv"), base_dir, step_id = "generate_cohorts", tags = c("cohort", "selection"))
@@ -1185,16 +1187,28 @@
         if (is.null(summary) || !is.data.frame(summary) || nrow(summary) == 0) {
           stop("CohortIncidence summary output is not available yet.")
         }
+        validation <- .studyAgentSlashReadJsonSafe(file.path(context$base_dir, "analysis-settings", "incidence_result_validation.json"), simplifyVector = FALSE)
+        sections <- list()
+        if (identical(as.character(validation$analytical_validation_status %||% ""), "review_required")) {
+          sections[[length(sections) + 1L]] <- list(
+            kind = "text",
+            text = paste0(
+              "ANALYTICAL REVIEW REQUIRED: ",
+              as.character(validation$message %||% "Every incidence-summary row reported zero outcomes."),
+              " Investigation SQL: ",
+              as.character(validation$validation_query_path %||% "analysis-settings/incidence_zero_outcome_validation.sql")
+            )
+          )
+        }
+        sections[[length(sections) + 1L]] <- .studyAgentSlashExplorationTableSection(
+          data = summary,
+          title = "Incidence summary preview",
+          preview_data = .studyAgentSlashCompactPreviewTable(summary, max_rows = 20L, max_cols = 8L)
+        )
         list(
           status = "ok",
           title = "Incidence summary preview",
-          sections = list(
-            .studyAgentSlashExplorationTableSection(
-              data = summary,
-              title = "Incidence summary preview",
-              preview_data = .studyAgentSlashCompactPreviewTable(summary, max_rows = 20L, max_cols = 8L)
-            )
-          )
+          sections = sections
         )
       }
     ),

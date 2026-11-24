@@ -37,6 +37,36 @@ test_that("execution exploration rejects unavailable commands without running sc
   )
 })
 
+test_that("incidence result explorer surfaces a zero-outcome analytical review warning", {
+  fixture <- make_execution_fixture("strategus_incidence")
+  results_root <- file.path(fixture$base_dir, "results", "CohortIncidenceModule")
+  dir.create(results_root, recursive = TRUE)
+  utils::write.csv(data.frame(
+    TARGET_COHORT_DEFINITION_ID = 701L,
+    OUTCOME_ID = 702L,
+    TAR_ID = 1L,
+    OUTCOMES = 0L
+  ), file.path(results_root, "ci_incidence_summary.csv"), row.names = FALSE)
+  dir.create(file.path(fixture$base_dir, "analysis-settings"), recursive = TRUE)
+  jsonlite::write_json(list(
+    analytical_validation_status = "review_required",
+    message = "Every incidence-summary row reported zero outcomes.",
+    validation_query_path = file.path(fixture$base_dir, "analysis-settings", "incidence_zero_outcome_validation.sql")
+  ), file.path(fixture$base_dir, "analysis-settings", "incidence_result_validation.json"), auto_unbox = TRUE)
+  state <- .studyAgentSlashReadProjectState(fixture$base_dir)
+  state$study_context$execution_roots <- list(results_root = dirname(results_root))
+  state$execution_plan <- list(list(step_id = "incidence_spec", label = "Run CohortIncidence", status = "completed", optional = FALSE))
+  state$resume$current_step_id <- "incidence_spec"
+  .studyAgentSlashWriteProjectState(state, fixture$base_dir)
+
+  result <- .studyAgentSlashRunExplorationCommand(fixture$base_dir, "incidence_summary_preview")
+
+  testthat::expect_identical(result$status, "ok")
+  testthat::expect_match(result$sections[[1]]$text, "ANALYTICAL REVIEW REQUIRED", fixed = TRUE)
+  registry <- .studyAgentSlashBuildArtifactRegistry(fixture$base_dir)
+  testthat::expect_true(any(vapply(registry, function(item) identical(item$id, "incidence_result_validation_json"), logical(1))))
+})
+
 test_that("execution lifecycle resolves, skips, and resets deterministic plan state", {
   fixture <- make_execution_fixture()
   expect_identical(.studyAgentSlashResolveWorkflowStepId(fixture$base_dir, "1"), "prepare")

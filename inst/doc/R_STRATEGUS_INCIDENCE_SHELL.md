@@ -50,7 +50,7 @@ Default output directory: `demo-strategus-cohort-incidence/`
 - `patched-target-cohorts/`: improved target cohort JSON (if applied).
 - `patched-outcome-cohorts/`: improved outcome cohort JSON (if applied).
 - `keeper-case-review/`: ACP Keeper artifacts, generated/approved concept sets, sampled rows, and review outputs.
-- `analysis-settings/`: analysis artifacts including `time_at_risk_settings.json` and the generated Strategus specification.
+- `analysis-settings/`: analysis artifacts including `time_at_risk_settings.json`, the generated Strategus specification, and—after `07_incidence_spec.R`—the technical execution summary plus incidence analytical-validation artifacts.
 - `scripts/`: generated R scripts (`01` through `08`, including the optional Diagnostics Explorer launcher).
 
 ## Deployment path ownership
@@ -112,6 +112,7 @@ Current runtime expectations:
 - `04_keeper_concept_sets.R` uses the ACP-based Keeper concept-set helper and writes `outputs/keeper_concept_set_state.json`.
 - `05_keeper_case_review.R` uses the ACP-based Keeper case-review helper and writes `outputs/keeper_case_review_state.json`.
 - `07_incidence_spec.R` reads `analysis-settings/time_at_risk_settings.json` instead of hard-coding TAR definitions.
+- After a technically successful `07_incidence_spec.R` run, Study Agent records `analysis-settings/incidence_result_validation.json`. If every reported `OUTCOMES` value is zero, it marks the result `review_required`, writes `incidence_zero_outcome_validation.sql`, and warns without changing the technical execution result. Review the generated cohort-overlap and 365-day investigation queries before accepting the analytical result; nonzero query results are evidence to investigate mappings and settings, not proof of analytical validity.
 - Run `08_launch_diagnostics_explorer.R` in a second R session, RStudio Job, or terminal if you want the workflow shell and, when enabled, `/ohdsi` support to remain available. The first launch may take a moment because it can build the merged diagnostics SQLite before opening the app.
 
 Generated scripts that connect to the database expect these site-specific files at the root of
