@@ -3193,7 +3193,7 @@ Keeper review saved: %s reviewed row(s)
     "outcomes <- lapply(outcome_ids, function(id) {",
     "  row <- cohortDefinitionSet[cohortDefinitionSet$cohortId == id, ]",
     "  if (nrow(row) == 0) stop('Outcome cohort id not found in Cohorts.csv: ', id)",
-    "  CohortIncidence::createOutcomeDef(id = as.integer(id), name = row$cohortName[1])",
+    "  CohortIncidence::createOutcomeDef(id = as.integer(id), name = row$cohortName[1], cohortId = as.integer(id))",
     "})",
     "tar_settings <- jsonlite::fromJSON(time_at_risk_settings_path, simplifyVector = FALSE)",
     "tar_defs <- tar_settings$time_at_risk_defs %||% list()",

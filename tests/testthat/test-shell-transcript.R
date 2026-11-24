@@ -531,6 +531,11 @@ testthat::test_that("incidence no-AI workflow acquires local cohorts and generat
   testthat::expect_true(file.exists(file.path(output_dir, "analysis-settings", "time_at_risk_settings.json")))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "03_generate_cohorts.R")))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "07_incidence_spec.R")))
+  incidence_script <- readLines(file.path(output_dir, "scripts", "07_incidence_spec.R"), warn = FALSE)
+  testthat::expect_true(any(grepl(
+    "createOutcomeDef\\(id = as.integer\\(id\\), name = row\\$cohortName\\[1\\], cohortId = as.integer\\(id\\)\\)",
+    incidence_script
+  )))
   state <- jsonlite::read_json(file.path(output_dir, "outputs", "study_agent_state.json"), simplifyVector = FALSE)
   testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
   testthat::expect_true(state$skip_phenotype_improvements)
