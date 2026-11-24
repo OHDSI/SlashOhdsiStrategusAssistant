@@ -1,23 +1,72 @@
+# Internal helpers for durable Keeper concept-set terminal state.
+.studyAgentSlashKeeperConceptSetResumeInstructions <- function(base_dir, status, generated_dir = NULL) {
+  generated_dir <- generated_dir %||% file.path(base_dir, "keeper-case-review", "concept-sets-generated")
+  list(
+    status = as.character(status),
+    generated_concept_sets_dir = as.character(generated_dir),
+    instructions = list(
+      "No completed Keeper concept-set result should be assumed from this status.",
+      "Inspect the saved state and any generated domain artifacts before retrying.",
+      "Rerun the optional Keeper review in the shell and choose to reuse existing generated artifacts, or rerun scripts/04_keeper_concept_sets.R after correcting the reported problem."
+    )
+  )
+}
+
+.studyAgentSlashWriteKeeperConceptSetTerminalState <- function(base_dir,
+                                                               execution_settings_path,
+                                                               cohort_id_map_path,
+                                                               cohort_roles_path,
+                                                               intent_path,
+                                                               acp_url,
+                                                               acp_timeout_seconds,
+                                                               review_roles,
+                                                               status,
+                                                               message) {
+  base_dir <- normalizePath(as.character(base_dir %||% ""), winslash = "/", mustWork = FALSE)
+  output_dir <- file.path(base_dir, "outputs")
+  keeper_dir <- file.path(base_dir, "keeper-case-review")
+  generated_dir <- file.path(keeper_dir, "concept-sets-generated")
+  approved_dir <- file.path(keeper_dir, "concept-sets-approved")
+  for (path in c(output_dir, keeper_dir, generated_dir, approved_dir)) {
+    if (!dir.exists(path)) dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  }
+  keeper_state_path <- file.path(output_dir, "keeper_concept_set_state.json")
+  keeper_state <- list(
+    status = as.character(status),
+    message = as.character(message),
+    error_count = 1L,
+    errors = list(list(step = "keeper_concept_set_workflow", message = as.character(message), path = keeper_state_path)),
+    base_dir = base_dir,
+    execution_settings_path = as.character(execution_settings_path %||% ""),
+    cohort_id_map_path = as.character(cohort_id_map_path %||% ""),
+    cohort_roles_path = as.character(cohort_roles_path %||% ""),
+    intent_path = as.character(intent_path %||% ""),
+    acp_url = as.character(acp_url %||% ""),
+    acp_timeout_seconds = as.numeric(acp_timeout_seconds %||% NA_real_),
+    keeper_dir = keeper_dir,
+    review_roles = as.list(as.character(review_roles %||% character(0))),
+    cohorts = list(),
+    resume = .studyAgentSlashKeeperConceptSetResumeInstructions(base_dir, status, generated_dir)
+  )
+  .studyAgentSlashWriteJson(keeper_state, keeper_state_path)
+  tryCatch(
+    .studyAgentSlashUpdateStudyAgentState(
+      state_path = file.path(output_dir, "study_agent_state.json"),
+      state_key = "keeper_concept_set",
+      state_value = keeper_state,
+      state_path_value = keeper_state_path,
+      artifact_paths = list(keeper_dir = keeper_dir, concept_sets_generated = generated_dir, concept_sets_approved = approved_dir)
+    ),
+    error = function(e) NULL
+  )
+  invisible(c(keeper_state, list(keeper_concept_set_state_path = keeper_state_path)))
+}
+
 #' Run ACP-based Keeper concept-set workflow for selected cohorts
-#' @param base_dir workflow base directory
-#' @param execution_settings_path path to strategus-execution-settings.json
-#' @param cohort_id_map_path path to outputs/cohort_id_map.json
-#' @param cohort_roles_path optional path to outputs/cohort_roles.json
-#' @param intent_path optional path to intent split JSON used to infer phenotype labels
-#' @param acp_url ACP base URL
-#' @param acp_timeout_seconds ACP HTTP timeout in seconds; defaults to ACP_TIMEOUT or 300
-#' @param review_roles cohort roles to process, defaults to outcome-first
-#' @param role_phenotypes optional named overrides by role or cohort id
-#' @param stage_callback optional workflow stage callback
-#' @param stage_gate optional interactive stage gate callback returning actions or setting updates
-#' @param domain_keys Keeper concept-set domains to request
-#' @param candidate_limit ACP concept candidate limit
-#' @param min_record_count optional minimum record count filter
-#' @param include_diagnostics whether to request ACP diagnostics
-#' @param auto_approve_generated when TRUE, seed approved concept sets from generated output when no approved file exists
-#' @param overwrite_approved_concept_sets when TRUE, replace approved concept sets with the current generated concept sets
-#' @param reuse_generated_concept_sets when TRUE, reuse existing generated concept-set artifacts
-#' @return invisible list summarizing artifact paths and per-cohort status
+#'
+#' On a setup or unexpected workflow error, writes a resumable terminal state
+#' under `outputs/keeper_concept_set_state.json` rather than losing partial
+#' generated domain artifacts.
 #' @export
 runKeeperConceptSetWorkflow <- function(base_dir,
                                         execution_settings_path = file.path(base_dir, "strategus-execution-settings.json"),
@@ -41,6 +90,7 @@ runKeeperConceptSetWorkflow <- function(base_dir,
                                         auto_approve_generated = TRUE,
                                         overwrite_approved_concept_sets = FALSE,
                                         reuse_generated_concept_sets = TRUE) {
+  tryCatch({
   context <- .studyAgentSlashPrepareKeeperWorkflowContext(
     base_dir = base_dir,
     execution_settings_path = execution_settings_path,
@@ -101,7 +151,12 @@ runKeeperConceptSetWorkflow <- function(base_dir,
     overwrite_approved_concept_sets = isTRUE(overwrite_approved_concept_sets),
     reuse_generated_concept_sets = isTRUE(reuse_generated_concept_sets),
     auto_approve_generated = isTRUE(auto_approve_generated),
-    cohorts = summary_rows
+    cohorts = summary_rows,
+    resume = .studyAgentSlashKeeperConceptSetResumeInstructions(
+      context$base_dir,
+      status = if (length(workflow_errors)) "error" else "ok",
+      generated_dir = context$generated_dir
+    )
   )
   keeper_state_path <- file.path(context$output_dir, "keeper_concept_set_state.json")
   .studyAgentSlashWriteJson(keeper_state, keeper_state_path)
@@ -118,6 +173,34 @@ runKeeperConceptSetWorkflow <- function(base_dir,
   )
 
   invisible(c(keeper_state, list(keeper_concept_set_state_path = keeper_state_path)))
+  }, study_agent_shell_quit = function(e) {
+    .studyAgentSlashWriteKeeperConceptSetTerminalState(
+      base_dir = base_dir,
+      execution_settings_path = execution_settings_path,
+      cohort_id_map_path = cohort_id_map_path,
+      cohort_roles_path = cohort_roles_path,
+      intent_path = intent_path,
+      acp_url = acp_url,
+      acp_timeout_seconds = acp_timeout_seconds,
+      review_roles = review_roles,
+      status = "interrupted",
+      message = "Keeper concept-set generation was interrupted before completion."
+    )
+    stop(e)
+  }, error = function(e) {
+    .studyAgentSlashWriteKeeperConceptSetTerminalState(
+      base_dir = base_dir,
+      execution_settings_path = execution_settings_path,
+      cohort_id_map_path = cohort_id_map_path,
+      cohort_roles_path = cohort_roles_path,
+      intent_path = intent_path,
+      acp_url = acp_url,
+      acp_timeout_seconds = acp_timeout_seconds,
+      review_roles = review_roles,
+      status = "error",
+      message = conditionMessage(e)
+    )
+  })
 }
 
 #' Run ACP-based Keeper case-review workflow for selected cohorts

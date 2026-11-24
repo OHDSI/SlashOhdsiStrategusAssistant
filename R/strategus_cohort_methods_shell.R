@@ -7163,6 +7163,7 @@ Keeper review saved: %s reviewed row(s)
         }
         cat(sprintf("Keeper concept-set state saved to: %s
 ", keeper_concept_set_state_path))
+        cat("No completed Keeper result should be assumed. Inspect the saved state and any generated domain artifacts, then rerun Keeper review and choose to reuse generated artifacts, or run scripts/04_keeper_concept_sets.R after correcting the error.\n")
       } else {
         keeper_concept_set_ran <- TRUE
         cat(sprintf("Keeper concept-set state saved to: %s
@@ -8158,7 +8159,7 @@ Keeper review saved: %s reviewed row(s)
   }
   if (identical(state$keeper_concept_set_status %||% "not_run", "ok")) {
     build_completed_steps <- c(build_completed_steps, "keeper_concept_sets")
-  } else if (identical(state$keeper_concept_set_status %||% "not_run", "error")) {
+  } else if ((state$keeper_concept_set_status %||% "not_run") %in% c("error", "interrupted")) {
     build_failed_steps <- c(build_failed_steps, "keeper_concept_sets")
   } else if (!isTRUE(ai_enabled)) {
     build_skipped_steps <- c(build_skipped_steps, "keeper_concept_sets")
@@ -8257,6 +8258,11 @@ Keeper review saved: %s reviewed row(s)
     runtime_state = runtime_state_path
   ))
   }, study_agent_shell_quit = function(condition) {
+    keeper_state_path <- file.path(outputDir, "outputs", "keeper_concept_set_state.json")
+    keeper_state <- tryCatch(if (file.exists(keeper_state_path)) jsonlite::fromJSON(keeper_state_path, simplifyVector = FALSE) else NULL, error = function(e) NULL)
+    if (identical(as.character(keeper_state$status %||% ""), "interrupted")) {
+      message("Keeper concept-set generation was interrupted. Partial artifacts and resume guidance were saved to: ", keeper_state_path)
+    }
     message("Study Agent shell exited. Returning to the R prompt.")
     invisible(list(status = "quit", output_dir = outputDir))
   })

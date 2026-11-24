@@ -49,6 +49,26 @@ test_that("Keeper refuses a generic cohort label when clinical context is unavai
   )
 })
 
+test_that("Keeper saves a resumable terminal state when setup fails before ACP generation", {
+  base_dir <- tempfile("keeper-terminal-state-")
+  dir.create(base_dir, recursive = TRUE)
+
+  result <- runKeeperConceptSetWorkflow(
+    base_dir = base_dir,
+    execution_settings_path = file.path(base_dir, "missing-execution-settings.json"),
+    cohort_id_map_path = file.path(base_dir, "missing-cohort-id-map.json")
+  )
+
+  state_path <- file.path(base_dir, "outputs", "keeper_concept_set_state.json")
+  expect_identical(result$status, "error")
+  expect_true(file.exists(state_path))
+  state <- jsonlite::read_json(state_path, simplifyVector = FALSE)
+  expect_identical(state$status, "error")
+  expect_match(state$message, "Execution settings file not found", fixed = TRUE)
+  expect_true(length(state$resume$instructions) >= 2L)
+  expect_match(state$resume$instructions[[3]], "04_keeper_concept_sets.R", fixed = TRUE)
+})
+
 test_that("generic-label reviews are identified and archived before replacement", {
   is_generic_review <- getFromNamespace(".studyAgentSlashReviewUsesGenericPhenotypeLabel", "slashOhdsiStrategusAssistant")
   archive <- getFromNamespace(".studyAgentSlashArchiveStaleKeeperReview", "slashOhdsiStrategusAssistant")
