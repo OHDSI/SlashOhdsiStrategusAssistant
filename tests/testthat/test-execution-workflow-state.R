@@ -196,14 +196,18 @@ test_that("valid diagnostics reconcile while Keeper and cohort generation requir
   expect_identical(state$execution_plan[[3]]$status, "interrupted")
 })
 
-test_that("an explicit run can retry an interrupted step", {
+test_that("an explicit database step is blocked before its script runs when configuration is incomplete", {
   fixture <- make_execution_fixture()
   script_path <- file.path(fixture$base_dir, "scripts", "retry.R")
   dir.create(dirname(script_path), recursive = TRUE)
-  writeLines("invisible(NULL)", script_path)
+  writeLines("stop('workflow script should not be sourced')", script_path)
   state <- .studyAgentSlashReadProjectState(fixture$base_dir)
   state$execution_plan <- list(list(step_id = "generate_cohorts", label = "Cohort generation", status = "interrupted", script_path = "scripts/retry.R", optional = FALSE))
   .studyAgentSlashWriteProjectState(state, fixture$base_dir)
-  result <- .studyAgentSlashRunWorkflowPlanStep(fixture$base_dir, "generate_cohorts")
-  expect_identical(result$status, "completed")
+  expect_error(
+    .studyAgentSlashRunWorkflowPlanStep(fixture$base_dir, "generate_cohorts"),
+    "Pre-execution configuration validation failed"
+  )
+  state <- .studyAgentSlashReadProjectState(fixture$base_dir)
+  expect_identical(state$execution_plan[[1]]$status, "interrupted")
 })

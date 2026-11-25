@@ -236,6 +236,10 @@
 
   availability <- .studyAgentSlashWorkflowStepRunAvailability(base_dir, step)
   if (!isTRUE(availability$runnable)) stop(as.character(availability$message %||% "Workflow step is not runnable."))
+  database_steps <- c("generate_cohorts", "diagnostics", "incidence_spec", "cm_spec")
+  if (as.character(step_id) %in% database_steps) {
+    validateStrategusExecutionConfiguration(base_dir)
+  }
   script_path <- .studyAgentSlashResolveProjectPath(step$script_path %||% "", base_dir)
 
   started_at <- .studyAgentSlashNowTimestamp()

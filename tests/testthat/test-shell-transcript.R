@@ -554,7 +554,12 @@ testthat::test_that("incidence no-AI workflow acquires local cohorts and generat
   testthat::expect_true(file.exists(file.path(output_dir, "selected-outcome-cohorts", "702.json")))
   testthat::expect_true(file.exists(file.path(output_dir, "analysis-settings", "time_at_risk_settings.json")))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "03_generate_cohorts.R")))
+  testthat::expect_true(file.exists(file.path(output_dir, "scripts", "06_diagnostics.R")))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "07_incidence_spec.R")))
+  for (script_name in c("03_generate_cohorts.R", "06_diagnostics.R", "07_incidence_spec.R")) {
+    script_lines <- readLines(file.path(output_dir, "scripts", script_name), warn = FALSE)
+    testthat::expect_true(any(grepl("validateStrategusExecutionConfiguration(base_dir)", script_lines, fixed = TRUE)))
+  }
   incidence_script <- readLines(file.path(output_dir, "scripts", "07_incidence_spec.R"), warn = FALSE)
   testthat::expect_true(any(grepl(
     "createOutcomeDef\\(id = as.integer\\(id\\), name = row\\$cohortName\\[1\\], cohortId = as.integer\\(id\\)\\)",
@@ -621,6 +626,10 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   testthat::expect_true(file.exists(state$manual_inputs_path))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "03_generate_cohorts.R")))
   testthat::expect_true(file.exists(file.path(output_dir, "scripts", "07_cm_spec.R")))
+  for (script_name in c("03_generate_cohorts.R", "06_diagnostics.R", "07_cm_spec.R")) {
+    script_lines <- readLines(file.path(output_dir, "scripts", script_name), warn = FALSE)
+    testthat::expect_true(any(grepl("validateStrategusExecutionConfiguration(base_dir)", script_lines, fixed = TRUE)))
+  }
   testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
   testthat::expect_true(state$skip_phenotype_improvements)
   testthat::expect_identical(state$analytic_settings_mode, "step_by_step")
