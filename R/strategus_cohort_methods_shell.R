@@ -1176,33 +1176,35 @@
   tryCatch({
     section_paths <- .studyAgentAnalyticSettingsSectionPaths()
     working <- .studyAgentDeepMerge(default_settings, normalize_seed(seed_settings))
-    working <- .studyAgentSetNestedValue(
-      working,
-      "get_db_cohort_method_data.removeDuplicateSubjects",
-      .studyAgentGetNestedValue(default_settings, "get_db_cohort_method_data.removeDuplicateSubjects")
-    )
-    working <- .studyAgentSetNestedValue(
-      working,
-      "create_ps.estimator",
-      .studyAgentGetNestedValue(default_settings, "create_ps.estimator")
-    )
-    working <- .studyAgentSetNestedValue(
-      working,
-      "create_ps.errorOnHighCorrelation",
-      isTRUE(.studyAgentGetNestedValue(default_settings, "create_ps.errorOnHighCorrelation"))
-    )
-    working <- .studyAgentSetNestedValue(
-      working,
-      "create_ps.useRegularization",
-      isTRUE(.studyAgentGetNestedValue(default_settings, "create_ps.useRegularization"))
-    )
-    working <- .studyAgentSetNestedValue(
-      working,
-      "stratify_by_ps.baseSelection",
-      .studyAgentGetNestedValue(default_settings, "stratify_by_ps.baseSelection")
-    )
-    working$source <- "manual_shell"
-    working$customized_sections <- character(0)
+    if (isTRUE(interactive)) {
+      working <- .studyAgentSetNestedValue(
+        working,
+        "get_db_cohort_method_data.removeDuplicateSubjects",
+        .studyAgentGetNestedValue(default_settings, "get_db_cohort_method_data.removeDuplicateSubjects")
+      )
+      working <- .studyAgentSetNestedValue(
+        working,
+        "create_ps.estimator",
+        .studyAgentGetNestedValue(default_settings, "create_ps.estimator")
+      )
+      working <- .studyAgentSetNestedValue(
+        working,
+        "create_ps.errorOnHighCorrelation",
+        isTRUE(.studyAgentGetNestedValue(default_settings, "create_ps.errorOnHighCorrelation"))
+      )
+      working <- .studyAgentSetNestedValue(
+        working,
+        "create_ps.useRegularization",
+        isTRUE(.studyAgentGetNestedValue(default_settings, "create_ps.useRegularization"))
+      )
+      working <- .studyAgentSetNestedValue(
+        working,
+        "stratify_by_ps.baseSelection",
+        .studyAgentGetNestedValue(default_settings, "stratify_by_ps.baseSelection")
+      )
+      working$source <- "manual_shell"
+      working$customized_sections <- character(0)
+    }
 
     show_section <- function(label) {
       if (isTRUE(interactive) && !is.null(io$section_header)) {
@@ -1515,7 +1517,7 @@
     default_settings,
     list(fit_outcome_model = outcome_model_defaults)
   )
-  keep_outcome_defaults <- !isTRUE(interactive)
+  keep_outcome_defaults <- FALSE
   if (isTRUE(interactive)) {
     keep_outcome_defaults <- .studyAgentPromptKeepDefaults(
       "For the remaining outcome model settings, keep the defaults or choose each option yourself?",
@@ -1539,7 +1541,7 @@
       )
     }
   }
-  if (isTRUE(keep_outcome_defaults)) {
+  if (isTRUE(interactive) && isTRUE(keep_outcome_defaults)) {
     working <- .studyAgentSetNestedValue(working, "fit_outcome_model.stratified", isTRUE(outcome_model_defaults$stratified))
     working <- .studyAgentSetNestedValue(working, "fit_outcome_model.useCovariates", isTRUE(outcome_model_defaults$useCovariates))
     working <- .studyAgentSetNestedValue(working, "fit_outcome_model.inversePtWeighting", isTRUE(outcome_model_defaults$inversePtWeighting))
@@ -4710,10 +4712,16 @@ Available exploration commands
   cached_inputs <- NULL
   cached_inputs <- NULL
   cached_manual_intent <- NULL
-  if (isTRUE(resume) && file.exists(manual_inputs_path)) {
+  restore_cached_inputs <- file.exists(manual_inputs_path) &&
+    !isTRUE(reset) &&
+    (isTRUE(resume) || !isTRUE(interactive))
+  if (isTRUE(restore_cached_inputs)) {
     cached_inputs <- tryCatch(read_json(manual_inputs_path), error = function(e) {
       stop(sprintf("Failed to read cached manual inputs at %s: %s", manual_inputs_path, conditionMessage(e)))
     })
+    if (!isTRUE(interactive) && !isTRUE(resume)) {
+      message("Non-interactive recovery is preserving saved CohortMethod inputs from: ", manual_inputs_path)
+    }
   }
   if (isTRUE(resume) && file.exists(manual_intent_path)) {
     cached_manual_intent <- tryCatch(read_json(manual_intent_path), error = function(e) {
@@ -5960,7 +5968,7 @@ Available exploration commands
 
   effective_analytic_settings <- list(
     profile_name = merge_or_default(default_analytic_settings$profile_name, cached_analytics$profile_name),
-    source = "manual_shell",
+    source = merge_or_default("manual_shell", cached_analytics$source),
     customized_sections = character(0),
     get_db_cohort_method_data = list(
       studyStartDate = merge_or_default(

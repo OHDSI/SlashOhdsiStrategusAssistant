@@ -508,6 +508,30 @@ testthat::test_that("CohortMethod step-by-step wizard recovers an invalid parame
   testthat::expect_equal(sum(prompts == "Risk window start (days)"), 2L)
 })
 
+testthat::test_that("noninteractive CohortMethod recovery preserves saved analytic settings", {
+  defaults <- .studyAgentDefaultCohortMethodAnalyticSettings()
+  saved <- defaults
+  saved$profile_name <- "Interrupted wizard recovery"
+  saved$source <- "saved_interactive_wizard"
+  saved$create_study_population$riskWindowStart <- 1L
+  saved$create_study_population$removeDuplicateSubjects <- "keep first"
+  saved$get_db_cohort_method_data$removeDuplicateSubjects <- "remove all"
+  saved$fit_outcome_model$stratified <- TRUE
+
+  recovered <- .studyAgentCollectStepByStepAnalyticSettings(
+    default_settings = defaults,
+    seed_settings = saved,
+    interactive = FALSE
+  )$settings
+
+  testthat::expect_identical(recovered$profile_name, "Interrupted wizard recovery")
+  testthat::expect_identical(recovered$source, "saved_interactive_wizard")
+  testthat::expect_identical(recovered$create_study_population$riskWindowStart, 1L)
+  testthat::expect_identical(recovered$create_study_population$removeDuplicateSubjects, "keep first")
+  testthat::expect_identical(recovered$get_db_cohort_method_data$removeDuplicateSubjects, "remove all")
+  testthat::expect_true(recovered$fit_outcome_model$stratified)
+})
+
 testthat::test_that("incidence no-AI workflow acquires local cohorts and generates scripts", {
   fixture_dir <- tempfile("incidence-no-ai-fixtures-")
   dir.create(fixture_dir, recursive = TRUE)
