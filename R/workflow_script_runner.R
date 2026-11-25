@@ -265,6 +265,11 @@
   result <- tryCatch({
     sys.source(script_path, envir = exec_env, keep.source = FALSE)
     list(status = "completed", error = NULL)
+  }, interrupt = function(e) {
+    list(
+      status = "interrupted",
+      error = "Execution was interrupted by the user. Inspect partial artifacts before explicitly retrying or resetting this step."
+    )
   }, error = function(e) {
     list(status = "failed", error = .studyAgentSlashSafeConditionMessage(e))
   })

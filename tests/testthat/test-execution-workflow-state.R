@@ -19,8 +19,11 @@ make_execution_fixture <- function(workflow_type = "strategus_incidence") {
 test_that("execution state exposes status, artifacts, and safe snapshot restoration", {
   fixture <- make_execution_fixture()
   expect_match(.studyAgentSlashSummarizeWorkflowStatus(fixture$base_dir)[[1]], "Prepare cohorts \\[not_started\\]")
+  dir.create(file.path(fixture$base_dir, "analysis-settings"), recursive = TRUE)
+  jsonlite::write_json(list(status = "running", phase = "propensity_score_fitting"), file.path(fixture$base_dir, "analysis-settings", "strategus_execution_progress.json"), auto_unbox = TRUE)
   registry <- .studyAgentSlashBuildArtifactRegistry(fixture$base_dir)
   expect_true(any(vapply(registry, function(item) identical(item$id, "review"), logical(1))))
+  expect_true(any(vapply(registry, function(item) identical(item$id, "strategus_execution_progress_json"), logical(1))))
   snapshot <- .studyAgentSlashBackupWorkflowState(fixture$base_dir, label = "before-change")
   changed_state <- .studyAgentSlashReadProjectState(fixture$base_dir)
   changed_state$execution_plan[[1]]$status <- "completed"
@@ -208,6 +211,26 @@ test_that("an explicit database step is blocked before its script runs when conf
     .studyAgentSlashRunWorkflowPlanStep(fixture$base_dir, "generate_cohorts"),
     "Pre-execution configuration validation failed"
   )
+  state <- .studyAgentSlashReadProjectState(fixture$base_dir)
+  expect_identical(state$execution_plan[[1]]$status, "interrupted")
+})
+
+test_that("an explicit user interruption remains interrupted instead of becoming a failure", {
+  fixture <- make_execution_fixture("strategus_cohort_methods")
+  script_path <- file.path(fixture$base_dir, "scripts", "interrupt.R")
+  dir.create(dirname(script_path), recursive = TRUE)
+  writeLines(
+    "stop(structure(list(message = 'user interrupt'), class = c('interrupt', 'condition')))",
+    script_path
+  )
+  state <- .studyAgentSlashReadProjectState(fixture$base_dir)
+  state$execution_plan <- list(list(step_id = "prepare", label = "Prepare cohorts", status = "interrupted", script_path = "scripts/interrupt.R", optional = FALSE))
+  .studyAgentSlashWriteProjectState(state, fixture$base_dir)
+
+  result <- .studyAgentSlashRunWorkflowPlanStep(fixture$base_dir, "prepare")
+
+  expect_identical(result$status, "interrupted")
+  expect_match(result$error, "interrupted by the user", fixed = TRUE)
   state <- .studyAgentSlashReadProjectState(fixture$base_dir)
   expect_identical(state$execution_plan[[1]]$status, "interrupted")
 })

@@ -629,7 +629,12 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   for (script_name in c("03_generate_cohorts.R", "06_diagnostics.R", "07_cm_spec.R")) {
     script_lines <- readLines(file.path(output_dir, "scripts", script_name), warn = FALSE)
     testthat::expect_true(any(grepl("validateStrategusExecutionConfiguration(base_dir)", script_lines, fixed = TRUE)))
+    testthat::expect_silent(parse(file = file.path(output_dir, "scripts", script_name)))
   }
+  cm_spec_script <- readLines(file.path(output_dir, "scripts", "07_cm_spec.R"), warn = FALSE)
+  testthat::expect_true(any(grepl("strategus_execution_progress.json", cm_spec_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("noiseLevel = 'quiet'", cm_spec_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("RStudio Escape or terminal Ctrl+C", cm_spec_script, fixed = TRUE)))
   testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
   testthat::expect_true(state$skip_phenotype_improvements)
   testthat::expect_identical(state$analytic_settings_mode, "step_by_step")
