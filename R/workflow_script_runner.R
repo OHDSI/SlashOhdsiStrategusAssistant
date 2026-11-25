@@ -183,6 +183,10 @@
       paste(failed_names, collapse = ", ")
     )
   }
+  impact_statement <- trimws(as.character((summary$assessment %||% list())$impact_statement %||% ""))
+  if (identical(overall_status, "partial_failure") && nzchar(impact_statement)) {
+    error_message <- paste(c(error_message, impact_statement), collapse = " ")
+  }
   if (identical(overall_status, "partial_failure")) {
     return(list(status = "completed_with_failures", error = error_message %||% NULL, summary = summary))
   }

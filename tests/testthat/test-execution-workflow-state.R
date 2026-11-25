@@ -32,6 +32,43 @@ test_that("execution state exposes status, artifacts, and safe snapshot restorat
   expect_match(.studyAgentSlashSummarizeWorkflowStatus(fixture$base_dir)[[1]], "Prepare cohorts \\[not_started\\]")
 })
 
+test_that("execution dialogue context reports portable impacts for skipped and failed local steps", {
+  fixture <- make_execution_fixture("strategus_cohort_methods")
+  dir.create(file.path(fixture$base_dir, "analysis-settings"), recursive = TRUE)
+  jsonlite::write_json(
+    list(
+      overall_status = "partial_failure",
+      modules = list(
+        list(module_name = "CharacterizationModule", status = "FAILED"),
+        list(module_name = "CohortMethodModule", status = "SUCCESS")
+      )
+    ),
+    file.path(fixture$base_dir, "analysis-settings", "strategus_execute_summary.json"),
+    auto_unbox = TRUE
+  )
+  state <- .studyAgentSlashReadProjectState(fixture$base_dir)
+  state$execution_plan <- list(
+    list(step_id = "apply_improvements", label = "Apply phenotype improvements", status = "skipped"),
+    list(step_id = "diagnostics", label = "Run diagnostics", status = "skipped"),
+    list(step_id = "keeper_case_review", label = "Run Keeper case review", status = "failed"),
+    list(step_id = "cm_spec", label = "Run cohort method specification", status = "completed_with_failures")
+  )
+  context <- .studyAgentSlashBuildExecutionDialogueContext(
+    project_state = state,
+    base_dir = fixture$base_dir,
+    step = state$execution_plan[[4]]
+  )
+  assessment <- context$workflow_assessment
+  entries <- setNames(assessment$steps, vapply(assessment$steps, function(item) item$id, character(1)))
+
+  expect_identical(entries$apply_improvements$status, "skipped")
+  expect_true("quality_improvement_opportunity_not_assessed" %in% unlist(entries$apply_improvements$impact_codes))
+  expect_true("diagnostic_evidence_unavailable" %in% unlist(entries$diagnostics$impact_codes))
+  expect_true("validation_evidence_unavailable" %in% unlist(entries$keeper_case_review$impact_codes))
+  expect_identical(entries$CharacterizationModule$status, "failed")
+  expect_true("results_interpretation_requires_review" %in% unlist(entries$CharacterizationModule$impact_codes))
+})
+
 test_that("execution exploration rejects unavailable commands without running scripts", {
   fixture <- make_execution_fixture("strategus_cohort_methods")
   expect_error(

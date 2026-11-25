@@ -1622,6 +1622,8 @@
             "successful_module_count",
             "failed_module_count",
             "failed_modules",
+            "results_acceptable_for_final_interpretation",
+            "execution_impact",
             "comparison_label",
             "target_id",
             "comparator_id",
@@ -1641,6 +1643,8 @@
             sum(module_rows$status %in% c("SUCCESS", "COMPLETED"), na.rm = TRUE),
             nrow(failed_rows),
             if (nrow(failed_rows) > 0) paste(failed_rows$module_name, collapse = "; ") else "",
+            as.character((execute_summary$assessment %||% list())$results_acceptable_for_final_interpretation %||% (nrow(failed_rows) == 0)),
+            as.character((execute_summary$assessment %||% list())$impact_statement %||% if (nrow(failed_rows) > 0) "One or more requested Strategus modules failed; review is required before results are accepted." else ""),
             .studyAgentSlashCollapseValue(state$comparison_label %||% ""),
             .studyAgentSlashCollapseValue(state$target_id %||% ""),
             .studyAgentSlashCollapseValue(state$comparator_id %||% ""),
@@ -1674,7 +1678,8 @@
           sections[[length(sections) + 1L]] <- list(
             kind = "text",
             text = paste(
-              "One or more Strategus modules failed. Use x cm_spec_cohort_method_summary for CohortMethod-specific partial outputs.",
+              "EXECUTION REVIEW REQUIRED: one or more Strategus modules failed. Later module output may be available, but the combined study execution is incomplete and results are not ready to accept.",
+              "Use x cm_spec_cohort_method_summary for CohortMethod-specific partial outputs.",
               "If your HADES environment provides a CohortMethod results Shiny app, launch it from a separate R script against the Strategus results/work roots above for deeper interactive review."
             )
           )

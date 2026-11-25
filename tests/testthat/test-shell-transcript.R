@@ -568,6 +568,8 @@ testthat::test_that("incidence no-AI workflow acquires local cohorts and generat
   testthat::expect_true(any(grepl("incidence_result_validation.json", incidence_script, fixed = TRUE)))
   testthat::expect_true(any(grepl("incidence_zero_outcome_validation.sql", incidence_script, fixed = TRUE)))
   testthat::expect_true(any(grepl("ANALYTICAL REVIEW REQUIRED", incidence_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("results_acceptable_for_final_interpretation", incidence_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("EXECUTION REVIEW REQUIRED", incidence_script, fixed = TRUE)))
   testthat::expect_silent(parse(file = file.path(output_dir, "scripts", "07_incidence_spec.R")))
   generated_expressions <- as.list(parse(file = file.path(output_dir, "scripts", "07_incidence_spec.R")))
   validation_definition <- Filter(function(expression) {
@@ -635,6 +637,8 @@ testthat::test_that("CohortMethod no-AI workflow acquires local cohorts and gene
   testthat::expect_true(any(grepl("strategus_execution_progress.json", cm_spec_script, fixed = TRUE)))
   testthat::expect_true(any(grepl("noiseLevel = 'quiet'", cm_spec_script, fixed = TRUE)))
   testthat::expect_true(any(grepl("RStudio Escape or terminal Ctrl+C", cm_spec_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("results_acceptable_for_final_interpretation", cm_spec_script, fixed = TRUE)))
+  testthat::expect_true(any(grepl("EXECUTION REVIEW REQUIRED", cm_spec_script, fixed = TRUE)))
   testthat::expect_identical(state$acp_capability_status, "disabled_by_user")
   testthat::expect_true(state$skip_phenotype_improvements)
   testthat::expect_identical(state$analytic_settings_mode, "step_by_step")

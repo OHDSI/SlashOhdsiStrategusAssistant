@@ -461,6 +461,81 @@
   tryCatch(.studyAgentSlashReadProjectJson(summary_path), error = function(e) NULL)
 }
 
+.studyAgentSlashWorkflowAssessmentEntry <- function(step_id, status) {
+  status <- as.character(status %||% "")
+  normalized_status <- if (identical(status, "interrupted")) "unavailable" else status
+  reason_category <- if (identical(status, "skipped")) "user_skipped" else "technical_failure"
+  assessment <- switch(
+    as.character(step_id),
+    diagnostics = list(
+      kind = "cohort_diagnostics",
+      impact_codes = c("diagnostic_evidence_unavailable", "results_interpretation_requires_review"),
+      impact_explanation = "Cohort diagnostics were not available for review, so potential cohort-definition and study-design concerns were not assessed.",
+      evidence_scope = c("cohort_diagnostics", "study_design_assessment")
+    ),
+    keeper_case_review = list(
+      kind = "cohort_validation",
+      impact_codes = c("validation_evidence_unavailable", "results_interpretation_requires_review"),
+      impact_explanation = "The planned reviewed-sample evidence for cohort validity in this data source was not available.",
+      evidence_scope = c("outcome_cohort_validation")
+    ),
+    keeper_concept_sets = list(
+      kind = "concept_set_review",
+      impact_codes = c("validation_evidence_unavailable", "results_interpretation_requires_review"),
+      impact_explanation = "The planned Keeper concept-set review evidence was not available.",
+      evidence_scope = c("concept_set_validation")
+    ),
+    apply_improvements = list(
+      kind = "phenotype_review",
+      impact_codes = c("quality_improvement_opportunity_not_assessed"),
+      impact_explanation = "Optional phenotype-improvement suggestions were not applied or reviewed.",
+      evidence_scope = c("phenotype_review")
+    ),
+    list(
+      kind = "workflow_step",
+      impact_codes = c("impact_unknown_requires_review"),
+      impact_explanation = "This workflow step did not complete; review its local evidence before accepting dependent results.",
+      evidence_scope = character(0)
+    )
+  )
+  list(
+    id = as.character(step_id),
+    kind = assessment$kind,
+    status = normalized_status,
+    reason_category = reason_category,
+    impact_codes = as.list(assessment$impact_codes),
+    impact_explanation = assessment$impact_explanation,
+    evidence_scope = as.list(assessment$evidence_scope)
+  )
+}
+
+.studyAgentSlashBuildWorkflowAssessment <- function(project_state, strategus_summary = NULL) {
+  entries <- list()
+  for (step in project_state$execution_plan %||% list()) {
+    step_id <- as.character(step$step_id %||% "")
+    status <- as.character(step$status %||% "")
+    if (!nzchar(step_id) || !(status %in% c("failed", "skipped", "interrupted", "completed_with_failures"))) next
+    if (identical(status, "completed_with_failures")) next
+    entries[[length(entries) + 1L]] <- .studyAgentSlashWorkflowAssessmentEntry(step_id, status)
+  }
+  failed_modules <- Filter(function(item) {
+    as.character(item$status %||% "") %in% c("FAILED", "ERROR")
+  }, strategus_summary$modules %||% list())
+  for (module in failed_modules) {
+    module_name <- as.character(module$module_name %||% module$moduleName %||% "Strategus module")
+    entries[[length(entries) + 1L]] <- list(
+      id = module_name,
+      kind = "analysis_module",
+      status = "failed",
+      reason_category = "technical_failure",
+      impact_codes = as.list(c("analysis_output_incomplete", "configuration_or_data_issue_requires_review", "results_interpretation_requires_review")),
+      impact_explanation = "A requested analysis module did not complete. Later module output may be available, but the combined study execution is incomplete and requires review before results are accepted.",
+      evidence_scope = as.list(c("analysis_execution", "results_interpretation"))
+    )
+  }
+  list(assessment_version = 1L, steps = entries)
+}
+
 .studyAgentSlashCompactExplorationCommandSummary <- function(commands, max_items = 6L) {
   commands <- commands %||% list()
   if (length(commands) == 0) return(list())
@@ -529,6 +604,7 @@
     list()
   }
   strategus_summary <- .studyAgentSlashReadStrategusExecuteSummaryCompact(base_dir)
+  workflow_assessment <- .studyAgentSlashBuildWorkflowAssessment(project_state, strategus_summary)
   failed_module_names <- as.list(vapply(Filter(function(item) {
     as.character(item$status %||% "") %in% c("FAILED", "ERROR")
   }, strategus_summary$modules %||% list()), function(item) {
@@ -552,6 +628,7 @@
     execution_status = step$status %||% NULL,
     execution_status_detail = strategus_summary$overall_status %||% NULL,
     execution_plan_summary = as.list(.studyAgentSlashSummarizeWorkflowStatus(base_dir)),
+    workflow_assessment = workflow_assessment,
     skipped_steps = skipped_step_summaries,
     failed_module_names = failed_module_names,
     module_failure_count = length(failed_module_names),
@@ -565,8 +642,7 @@
       use_logical_artifact_ids = TRUE,
       ask_before_loading_more = TRUE,
       max_artifacts_per_request = 3L
-    )),
-    last_error = runtime_state$last_error %||% NULL
+    ))
   ))
 }
 
